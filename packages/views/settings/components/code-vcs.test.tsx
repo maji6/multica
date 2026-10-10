@@ -3,10 +3,12 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithI18n } from "../../test/i18n";
 import type { VCSConnection } from "@multica/core/types";
+import { toast } from "sonner";
 
 const mockConnect = vi.hoisted(() => vi.fn());
 const mockRotate = vi.hoisted(() => vi.fn());
 const mockDelete = vi.hoisted(() => vi.fn());
+const mockCopyText = vi.hoisted(() => vi.fn());
 const listing = vi.hoisted(() => ({
   current: {
     connections: [] as VCSConnection[],
@@ -29,6 +31,7 @@ vi.mock("@multica/core/api", () => ({
   },
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
+vi.mock("@multica/ui/lib/clipboard", () => ({ copyText: mockCopyText }));
 
 vi.mock("./gongfeng-repository-picker", () => ({ GongfengRepositoryPicker: ({ connection }: { connection: { instance_url: string } }) => <div role="dialog" aria-label="Gongfeng repositories">{connection.instance_url}</div> }));
 
@@ -48,6 +51,7 @@ const CONNECTION = {
 beforeEach(() => {
   vi.clearAllMocks();
   mockDelete.mockResolvedValue({ webhook_cleanup_error: "" });
+  mockCopyText.mockResolvedValue(true);
   listing.current = { connections: [], configured: true, can_manage: true };
 });
 
@@ -55,7 +59,6 @@ describe("VCSConnectionRows", () => {
   it("lets an admin view and copy an existing Gongfeng webhook without rotating its secret", async () => {
     listing.current.connections = [{ ...CONNECTION, provider: "gongfeng", instance_url: "https://git.code.tencent.com" }];
     const user = userEvent.setup();
-    const clipboard = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
     renderWithI18n(<VCSConnectionRows />);
     await user.click(screen.getByRole("button", { name: "Actions for https://git.code.tencent.com" }));
     await user.click(await screen.findByRole("menuitem", { name: "View webhook" }));
@@ -63,11 +66,25 @@ describe("VCSConnectionRows", () => {
     expect(within(dialog).getByLabelText("Webhook URL")).toHaveValue(CONNECTION.webhook_url);
     expect(within(dialog).queryByLabelText("Webhook secret")).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Copy: Webhook URL" }));
-    expect(clipboard).toHaveBeenCalledWith(CONNECTION.webhook_url);
+    expect(mockCopyText).toHaveBeenCalledWith(CONNECTION.webhook_url);
+    expect(toast.success).toHaveBeenCalledWith("Copied to clipboard");
     expect(mockRotate).not.toHaveBeenCalled();
     expect(mockConnect).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole("button", { name: "Gongfeng repositories" }));
     expect(await screen.findByRole("dialog", { name: "Gongfeng repositories" })).toBeVisible();
+  });
+
+  it("shows a copy error when the shared clipboard helper cannot copy the webhook", async () => {
+    listing.current.connections = [CONNECTION];
+    mockCopyText.mockResolvedValue(false);
+    const user = userEvent.setup();
+    renderWithI18n(<VCSConnectionRows />);
+    await user.click(screen.getByRole("button", { name: "Actions for https://git.acme.dev" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View webhook" }));
+    await user.click(within(await screen.findByRole("dialog", { name: "Webhook" })).getByRole("button", { name: "Copy: Webhook URL" }));
+    expect(mockCopyText).toHaveBeenCalledWith(CONNECTION.webhook_url);
+    expect(toast.error).toHaveBeenCalledWith("Could not copy");
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("shows the receiver path when a connection has no public webhook URL", async () => {

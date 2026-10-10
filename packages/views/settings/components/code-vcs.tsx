@@ -8,6 +8,7 @@ import { Copy, FolderGit2, GitBranch, MoreHorizontal, RefreshCw, Unplug, Webhook
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
+import { copyText } from "@multica/ui/lib/clipboard";
 import {
   Select,
   SelectContent,
@@ -143,10 +144,9 @@ export function VCSConnectionRows() {
   }
 
   async function copy(value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
+    if (await copyText(value)) {
       toast.success(t(($) => $.vcs.copied));
-    } catch {
+    } else {
       toast.error(t(($) => $.vcs.copy_failed));
     }
   }
