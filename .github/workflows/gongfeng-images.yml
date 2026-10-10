@@ -1,0 +1,119 @@
+name: Gongfeng Images
+
+on:
+  push:
+    branches: [codex/gongfeng-integration]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gongfeng-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.repository == 'maji6/multica' && github.ref == 'refs/heads/codex/gongfeng-integration'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Select immutable source tag
+        id: version
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: echo "tag=gongfeng-${SOURCE_SHA}" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "~1.26.9"
+          check-latest: true
+          cache-dependency-path: server/go.sum
+      - name: Verify Go tests
+        run: bash scripts/test-go.sh --race
+      - name: Scan Go vulnerabilities
+        working-directory: server
+        run: go tool govulncheck ./...
+
+  build:
+    needs: verify
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, web]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+        arch: [amd64, arm64]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Select Dockerfile
+        id: source
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          case "$COMPONENT" in
+            backend) echo "file=Dockerfile" >> "$GITHUB_OUTPUT" ;;
+            web) echo "file=Dockerfile.web" >> "$GITHUB_OUTPUT" ;;
+            *) exit 1 ;;
+          esac
+      - name: Build and publish architecture image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ steps.source.outputs.file }}
+          pull: true
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ghcr.io/maji6/multica-${{ matrix.component }}:${{ needs.verify.outputs.tag }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.verify.outputs.tag }}
+          build-args: |
+            VERSION=${{ needs.verify.outputs.tag }}
+            COMMIT=${{ github.sha }}
+            NEXT_PUBLIC_APP_VERSION=${{ needs.verify.outputs.tag }}
+          cache-from: type=gha,scope=gongfeng-${{ matrix.component }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=gongfeng-${{ matrix.component }}-${{ matrix.arch }}
+
+  publish:
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish both multi-platform manifests
+        env:
+          IMAGE_TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          for component in backend web; do
+            image="ghcr.io/maji6/multica-${component}"
+            docker buildx imagetools create \
+              --tag "${image}:${IMAGE_TAG}" \
+              "${image}:${IMAGE_TAG}-amd64" \
+              "${image}:${IMAGE_TAG}-arm64"
+            docker buildx imagetools inspect "${image}:${IMAGE_TAG}"
+            docker buildx imagetools inspect --raw "${image}:${IMAGE_TAG}" |
+              jq -e '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] | sort == ["amd64", "arm64"]'
+            printf -- '- `%s:%s`\n' "$image" "$IMAGE_TAG" >> "$GITHUB_STEP_SUMMARY"
+          done
