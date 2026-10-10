@@ -10,7 +10,7 @@ const listing = vi.hoisted(() => ({
   current: {
     connections: [] as {
       id: string;
-      provider: "forgejo" | "gitea" | "gitlab";
+      provider: "forgejo" | "gitea" | "gitlab" | "gongfeng";
       instance_url: string;
       account_login: string;
     }[],
@@ -32,7 +32,9 @@ vi.mock("@multica/core/api", () => ({
     deleteVCSConnection: mockDelete,
   },
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
+
+vi.mock("./gongfeng-repository-picker", () => ({ GongfengRepositoryPicker: ({ connection }: { connection: { instance_url: string } }) => <div role="dialog" aria-label="Gongfeng repositories">{connection.instance_url}</div> }));
 
 import { VCSConnectionRows } from "./code-vcs";
 
@@ -45,10 +47,37 @@ const CONNECTION = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockDelete.mockResolvedValue({ webhook_cleanup_error: "" });
   listing.current = { connections: [], configured: true, can_manage: true };
 });
 
 describe("VCSConnectionRows", () => {
+  it("connects official Gongfeng and opens repository selection", async () => {
+    mockConnect.mockResolvedValue({
+      ...CONNECTION,
+      provider: "gongfeng",
+      instance_url: "https://git.code.tencent.com",
+      webhook_url: "https://api.example/api/webhooks/vcs/vcs-1",
+      webhook_secret: "gongfeng-secret",
+    });
+    const user = userEvent.setup();
+    renderWithI18n(<VCSConnectionRows />);
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    const form = await screen.findByRole("dialog");
+    await user.click(within(form).getByRole("combobox"));
+    await user.click(await screen.findByRole("option", { name: "Tencent Gongfeng" }));
+    expect(within(form).getByLabelText("Instance URL")).toHaveValue("https://git.code.tencent.com");
+    expect(within(form).getByText(/Create a Private Token/)).toBeInTheDocument();
+    await user.type(within(form).getByLabelText("Access token"), "tok");
+    await user.click(within(form).getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(mockConnect).toHaveBeenCalledWith("ws-1", {
+      provider: "gongfeng", instance_url: "https://git.code.tencent.com", access_token: "tok",
+    }));
+    const picker = await screen.findByRole("dialog", { name: "Gongfeng repositories" });
+    expect(within(picker).getByText("https://git.code.tencent.com")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("gongfeng-secret")).not.toBeInTheDocument();
+  });
+
   it("connects an instance from a dialog and then shows the one-time webhook secret", async () => {
     mockConnect.mockResolvedValue({
       ...CONNECTION,

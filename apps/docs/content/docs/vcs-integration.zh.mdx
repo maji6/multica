@@ -1,6 +1,6 @@
 ---
-title: 自托管 Git 代码托管
-description: 为每个工作区连接自托管的 Forgejo、Gitea 或 GitLab 实例，使分支名或标题中带有任务编号、或正文中在关闭关键字后带有任务编号的 Pull Request / Merge Request 自动关联到对应任务，在 PR 合并后将任务改为工作区选定的状态，并展示 CI 状态。
+title: Git 代码托管集成
+description: 连接 Forgejo、Gitea、GitLab 或腾讯工蜂，将合并请求关联到任务，并在合并后流转任务状态。
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
@@ -9,7 +9,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 **仅适用于自部署的 Multica。** 此集成只在你**自己部署 Multica** 时可用，Multica 云端不提供。这里的「自托管」指的是 **Multica 本身自部署**——通常是为了让它能访问你自己网络内的 Git 实例。需要服务端运维开启（`MULTICA_VCS_INTEGRATION_ENABLED=true`）并设置 `MULTICA_VCS_SECRET_KEY`；在此之前，设置 → 代码里不会出现该行。
 </Callout>
 
-Multica 按工作区连接自托管的 Git 代码托管：**Forgejo**、**Gitea** 或 **GitLab**。连接后，任何在分支名或标题中包含任务编号（例如 `MUL-123`）、或在正文的关闭关键字后写出该编号（`Closes MUL-123`）的 Pull Request（GitLab 为 Merge Request）都会**自动关联**到对应的 [任务](/issues)，出现在任务侧栏的 **Pull requests** 中；任务的所有关联 PR 都合并后，任务会改为工作区选定的状态（默认「完成」）。head commit 的 CI 会以检查条的形式显示在卡片上。
+自部署的 Multica 按工作区连接 **Forgejo**、**Gitea**、**GitLab** 或官方 **腾讯工蜂**。连接后，任何在分支名或标题中包含任务编号（例如 `MUL-123`）、或在正文的关闭关键字后写出该编号（`Closes MUL-123`）的 Pull Request（GitLab 为 Merge Request）都会**自动关联**到对应的 [任务](/issues)，出现在任务侧栏的 **Pull requests** 中；任务的所有关联 PR 都合并后，任务会改为工作区选定的状态（默认「完成」）。Forgejo/Gitea 和 GitLab 的 head commit CI 会以检查条的形式显示在卡片上。
 
 这些代码托管与 GitHub 并行工作：一个工作区可任意组合使用。
 
@@ -46,7 +46,7 @@ MULTICA_VCS_SECRET_KEY=<base64 32 字节密钥>
 1. 在代码托管中创建具备仓库读取权限的访问令牌：
  - **Forgejo / Gitea**：设置 → 应用。
  - **GitLab**：具备 `read_api` 权限的个人（或群组/项目）访问令牌。
-2. 在 Multica 中打开 **设置 → 代码**，在 **自托管 Git** 一行点击 **连接**。
+2. 在 Multica 中打开 **设置 → 代码**，在 **Git 代码托管** 一行点击 **连接**。
 3. 选择**提供方**，填写实例地址（例如 `https://forgejo.example.com`）和访问令牌，点击 **连接**。Multica 会先用该令牌访问实例进行校验，再保存。
 4. 复制连接后显示的 **Webhook 地址** 与 **Webhook 密钥**。
 
@@ -88,3 +88,29 @@ Multica 会用存储的密钥校验每次投递，因此没有匹配密钥的 We
 ## 智能体创建 Pull Request
 
 创建 PR 无需在 Multica 中进行任何代码托管配置。智能体在运行时中检出仓库，并使用运行时主机自身的 Git 凭据推送分支和创建 PR。要让智能体在某个代码托管上工作，确保 daemon 主机能对其完成认证即可——例如 SSH 部署密钥，或主机 Git 凭据助手中的令牌——再像往常一样添加仓库地址。仓库检出支持任意 Git URL，因此无需提供方专属配置。
+
+## 腾讯工蜂
+
+在提供方中选择 **腾讯工蜂**，官方实例地址为 `https://git.code.tencent.com`。
+在工蜂账号设置中创建 **Private Token**，确保账号可以访问目标仓库；Multica
+通过 `/api/v3/user` 校验令牌。工蜂官方服务也可接入自部署的 Multica，
+不需要自建工蜂实例。
+
+连接后直接选择 **工蜂仓库**。Multica 会自动配置 MR Webhook，并在后台分页导入已有 MR。令牌需要有读取目标仓库和管理 Webhook 的权限；Multica 的公开地址需要能被工蜂通过 HTTPS 访问。在 **添加仓库 → 从工蜂选择** 中选择仓库，还会将克隆地址加入工作区，供智能体使用。
+
+仓库选择器会显示同步进度和权限错误。点击 **重新同步** 可重新导入完整历史并修复 Webhook。重新生成密钥会更新已注册的 Webhook，不会重复创建。停止同步会移除已注册的 Webhook、保留已镜像的 MR；断开连接会删除该连接及其镜像数据。若令牌失效导致远程 Webhook 清理失败，连接仍会移除，并提示在工蜂中手动删除剩余 Webhook。若需手动配置，可重新生成密钥，用提供的地址和 token 启用 **Merge request** 事件。投递使用 `X-Event: Merge Request Hook` 和 `X-Token`。
+
+创建、更新、关闭、重开及合并复用上述任务关联和状态流转规则。卡片使用仓库内的 `iid`，API 详情请求单独解析全局 `id`。API 刷新会补全作者，并恢复漏收事件。CI 检查及冲突信息会在 MR 事件、访问任务页面和后台定期扫描时刷新。检查结果属于当前源提交，支持 fork 分支；提交变化后不会沿用旧检查结果。刷新失败时，已有结果会标为过期。缺失的审批或合并策略信息不会通过冲突状态推断。
+
+智能体使用运行时主机上的社区工具 [gongfeng-cli](https://github.com/studyzy/gongfeng-cli)。
+可固定到已核对的版本安装：
+
+```sh
+go install github.com/studyzy/gongfeng-cli/cmd/gongfeng@09d82bd94210ab0e8a8481cf8d00b9b988ea024d
+```
+
+运行时自行配置 Git 凭据和 `GONGFENG_TOKEN`，服务端保存的令牌不会传给智能体。
+先查看 `gongfeng --project-id <namespace/project> mr create --help`，创建时明确
+`--source-branch`、`--target-branch`、`--title` 和 `--description`。
+CLI 的 `show`、`update`、`accept` 使用全局 MR `id`，须从 `mr list --json` 获取，
+不能直接传卡片上的 `iid`。
