@@ -40,3 +40,20 @@ unresolved reachable vulnerability.
 
 Every Go binary retains its compiler version in the standard Go build metadata;
 use `go version -m <binary>` when auditing a downloaded release artifact.
+
+## Gongfeng fork container channel
+
+In `maji6/multica`, the Gongfeng Images workflow publishes backend and web images
+from `codex/gongfeng-integration`. After verification and both multi-platform
+manifests succeed, it updates `gongfeng-stable` for both images. Immutable
+`gongfeng-<commit SHA>` tags remain available for version identification.
+
+Only the current branch head can advance the stable channel; rerunning an older
+commit does not overwrite it. The two registry tags are separate writes, so wait
+for the entire publish job to succeed before deploying. A failed publication
+must be repaired and verified before deployment.
+
+Dokploy deployments using `gongfeng-stable` should set `pull_policy: always` for
+the backend and web services. Deploy manually after the workflow succeeds;
+publishing an image does not trigger an intranet deployment. Upstream changes
+must be merged and verified in the fork before reaching this channel.

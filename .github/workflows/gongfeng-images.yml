@@ -94,6 +94,7 @@ jobs:
     needs: [verify, build]
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       packages: write
     steps:
       - uses: docker/setup-buildx-action@v3
@@ -116,4 +117,30 @@ jobs:
             docker buildx imagetools inspect --raw "${image}:${IMAGE_TAG}" |
               jq -e '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] | sort == ["amd64", "arm64"]'
             printf -- '- `%s:%s`\n' "$image" "$IMAGE_TAG" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Publish the stable channel after both manifests pass
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE_TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          current_sha=$(gh api repos/maji6/multica/branches/codex/gongfeng-integration --jq '.commit.sha')
+          if [ "$current_sha" != "$SOURCE_SHA" ]; then
+            echo "A newer branch commit exists; leaving gongfeng-stable unchanged." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          for component in backend web; do
+            image="ghcr.io/maji6/multica-${component}"
+            docker buildx imagetools create \
+              --tag "${image}:gongfeng-stable" "${image}:${IMAGE_TAG}"
+          done
+
+          for component in backend web; do
+            image="ghcr.io/maji6/multica-${component}"
+            source_hash=$(docker buildx imagetools inspect --raw "${image}:${IMAGE_TAG}" | sha256sum)
+            stable_hash=$(docker buildx imagetools inspect --raw "${image}:gongfeng-stable" | sha256sum)
+            test "$source_hash" = "$stable_hash"
+            printf -- '- `%s:gongfeng-stable` matches `%s`\n' "$image" "$IMAGE_TAG" >> "$GITHUB_STEP_SUMMARY"
           done
