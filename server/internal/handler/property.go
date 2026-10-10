@@ -171,11 +171,12 @@ type CreatePropertyRequest struct {
 }
 
 type UpdatePropertyRequest struct {
-	Name        *string         `json:"name"`
-	Description *string         `json:"description"`
-	Icon        *string         `json:"icon"`
-	Config      *PropertyConfig `json:"config"`
-	Archived    *bool           `json:"archived"`
+	Name          *string          `json:"name"`
+	Description   *string          `json:"description"`
+	Icon          *string          `json:"icon"`
+	Config        *PropertyConfig  `json:"config"`
+	Archived      *bool            `json:"archived"`
+	AppendOptions []PropertyOption `json:"append_options"`
 }
 
 // ---------------------------------------------------------------------------
@@ -602,6 +603,27 @@ func (h *Handler) UpdateProperty(w http.ResponseWriter, r *http.Request) {
 				return fail(http.StatusBadRequest, err.Error())
 			}
 			params.Icon = pgtype.Text{String: icon, Valid: true}
+		}
+		if len(req.AppendOptions) > 0 {
+			if req.Config != nil || (existing.Type != "select" && existing.Type != "multi_select") {
+				return fail(http.StatusBadRequest, "append_options requires a select property and cannot accompany config")
+			}
+			// Merge under the existing property lock so concurrent integrations
+			// never replace another writer's options. Retries reuse the same name.
+			cfg := parsePropertyConfig(existing.Config)
+			for _, option := range req.AppendOptions {
+				found := false
+				for _, old := range cfg.Options {
+					if strings.EqualFold(old.Name, strings.TrimSpace(option.Name)) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					cfg.Options = append(cfg.Options, option)
+				}
+			}
+			req.Config = &cfg
 		}
 		if req.Config != nil {
 			configJSON, err := validatePropertyConfig(existing.Type, req.Config)

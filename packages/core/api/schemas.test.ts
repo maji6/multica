@@ -1334,6 +1334,15 @@ describe("AppConfigSchema issue_create_properties_supported drift", () => {
   });
 });
 
+describe("AppConfigSchema property_append_options_supported drift", () => {
+  it.each([undefined, "yes", null, false])("defaults a missing or malformed declaration %s to false", (value) => {
+    expect(AppConfigSchema.parse({ property_append_options_supported: value }).property_append_options_supported).toBe(false);
+  });
+  it("preserves the server capability declaration", () => {
+    expect(AppConfigSchema.parse({ property_append_options_supported: true }).property_append_options_supported).toBe(true);
+  });
+});
+
 describe("AppConfigSchema cdn_signed drift", () => {
   it("defaults cdn_signed to false when the server omits it (pre-MUL-3254 servers)", () => {
     const parsed = AppConfigSchema.parse({ cdn_domain: "cdn.example.com" });

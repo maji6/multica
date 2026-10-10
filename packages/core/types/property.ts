@@ -302,6 +302,8 @@ export interface UpdatePropertyRequest {
   icon?: string;
   config?: IssuePropertyConfig;
   archived?: boolean;
+  /** Atomically add missing select options, preserving current definitions. */
+  append_options?: Array<Omit<IssuePropertyOption, "id"> & { id?: string }>;
 }
 
 export interface ListPropertiesResponse {
