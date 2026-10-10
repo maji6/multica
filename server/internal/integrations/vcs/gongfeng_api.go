@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // GongfengClient uses the public v3 API. It deliberately has no SDK dependency.
@@ -31,7 +32,10 @@ func NewGongfengClient(base, token string) (*GongfengClient, error) {
 }
 
 // GongfengAPIError omits response bodies, which can contain secrets or HTML.
-type GongfengAPIError struct{ Status int }
+type GongfengAPIError struct {
+	Status     int
+	RetryAfter time.Duration
+}
 
 func (e *GongfengAPIError) Error() string {
 	switch e.Status {
@@ -74,7 +78,16 @@ func (c *GongfengClient) request(ctx context.Context, method, path string, query
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &GongfengAPIError{resp.StatusCode}
+		apiErr := &GongfengAPIError{Status: resp.StatusCode}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			apiErr.RetryAfter = time.Minute
+			if seconds, parseErr := strconv.ParseInt(resp.Header.Get("Retry-After"), 10, 32); parseErr == nil && seconds > 0 {
+				apiErr.RetryAfter = time.Duration(seconds) * time.Second
+			} else if until, parseErr := http.ParseTime(resp.Header.Get("Retry-After")); parseErr == nil && time.Until(until) > 0 {
+				apiErr.RetryAfter = time.Until(until)
+			}
+		}
+		return nil, apiErr
 	}
 	if out != nil {
 		b, err := io.ReadAll(io.LimitReader(resp.Body, (10<<20)+1))
@@ -268,7 +281,7 @@ func (c *GongfengClient) MergeRequest(ctx context.Context, project string, iid i
 			return out, err
 		}
 	}
-	return GongfengMR{}, &GongfengAPIError{404}
+	return GongfengMR{}, &GongfengAPIError{Status: 404}
 }
 func (c *GongfengClient) HeadSHA(ctx context.Context, m GongfengMR) (string, error) {
 	if m.SHA != "" {

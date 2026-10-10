@@ -168,11 +168,11 @@ SELECT pr.id, pr.workspace_id, pr.connection_id, pr.provider, pr.repo_owner, pr.
 WHERE pr.provider = 'gongfeng' AND pr.state IN ('open', 'draft')
     AND EXISTS (SELECT 1 FROM issue_vcs_pull_request ipr WHERE ipr.pull_request_id = pr.id)
     AND (pr.snapshot_attempted_at IS NULL OR (pr.snapshot_head_sha <> pr.head_sha AND pr.snapshot_error = '') OR pr.snapshot_attempted_at < now() - CASE WHEN pr.snapshot_error <> '' THEN interval '5 minutes' ELSE interval '2 minutes' END)
-ORDER BY pr.snapshot_fetched_at NULLS FIRST LIMIT 40
+ORDER BY (pr.id > $1::uuid) DESC, pr.id LIMIT 40
 `
 
-func (q *Queries) ListDueGongfengPullRequests(ctx context.Context) ([]VcsPullRequest, error) {
-	rows, err := q.db.Query(ctx, listDueGongfengPullRequests)
+func (q *Queries) ListDueGongfengPullRequests(ctx context.Context, afterID pgtype.UUID) ([]VcsPullRequest, error) {
+	rows, err := q.db.Query(ctx, listDueGongfengPullRequests, afterID)
 	if err != nil {
 		return nil, err
 	}
@@ -224,11 +224,18 @@ const listDueGongfengRepositories = `-- name: ListDueGongfengRepositories :many
 SELECT gr.connection_id, gr.project_id, gr.path, gr.web_url, gr.clone_url, gr.description, gr.default_branch, gr.hook_id, gr.hook_revision, gr.next_page, gr.scan_started_at, gr.synced_at, gr.attempted_at, gr.sync_error, gr.updated_at FROM gongfeng_repository gr JOIN vcs_connection vc ON vc.id = gr.connection_id
 WHERE vc.provider = 'gongfeng' AND
     (gr.attempted_at IS NULL OR gr.attempted_at < now() - CASE WHEN gr.sync_error <> '' THEN interval '5 minutes' ELSE interval '1 minute' END)
-ORDER BY gr.attempted_at NULLS FIRST LIMIT 20
+ORDER BY (ROW(gr.connection_id, gr.project_id) > ROW($1::uuid, $2::bigint)) DESC,
+    gr.connection_id, gr.project_id LIMIT 20
 `
 
-func (q *Queries) ListDueGongfengRepositories(ctx context.Context) ([]GongfengRepository, error) {
-	rows, err := q.db.Query(ctx, listDueGongfengRepositories)
+type ListDueGongfengRepositoriesParams struct {
+	AfterConnection pgtype.UUID `json:"after_connection"`
+	AfterProject    int64       `json:"after_project"`
+}
+
+// Rotate across bounded batches even when an entire connection is paused.
+func (q *Queries) ListDueGongfengRepositories(ctx context.Context, arg ListDueGongfengRepositoriesParams) ([]GongfengRepository, error) {
+	rows, err := q.db.Query(ctx, listDueGongfengRepositories, arg.AfterConnection, arg.AfterProject)
 	if err != nil {
 		return nil, err
 	}

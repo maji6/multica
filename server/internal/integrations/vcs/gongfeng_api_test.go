@@ -3,10 +3,12 @@ package vcs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGongfengAPI_MRIdentityAndForkBranch(t *testing.T) {
@@ -157,6 +159,36 @@ func TestGongfengAPI_ErrorsNeverEchoCredentialsOrFollowRedirects(t *testing.T) {
 			_, _, err := client.Projects(context.Background(), "", 1)
 			if err == nil || strings.Contains(err.Error(), "test-token") || strings.Contains(err.Error(), "secret-payload") {
 				t.Fatalf("unsafe error %v", err)
+			}
+		})
+	}
+}
+
+func TestGongfengAPI_RetryAfter(t *testing.T) {
+	for _, tc := range []struct {
+		name, header     string
+		minimum, maximum time.Duration
+	}{
+		{"seconds", "600", 10 * time.Minute, 10 * time.Minute},
+		{"date", time.Now().Add(10 * time.Minute).UTC().Format(http.TimeFormat), 9 * time.Minute, 10 * time.Minute},
+		{"missing", "", time.Minute, time.Minute},
+		{"invalid", "not-a-date", time.Minute, time.Minute},
+		{"negative", "-1", time.Minute, time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Retry-After", tc.header)
+				w.WriteHeader(http.StatusTooManyRequests)
+			}))
+			defer server.Close()
+			client, err := NewGongfengClient(server.URL, "test-token")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = client.Projects(context.Background(), "", 1)
+			var limit *GongfengAPIError
+			if !errors.As(err, &limit) || limit.Status != 429 || limit.RetryAfter < tc.minimum || limit.RetryAfter > tc.maximum {
+				t.Fatalf("Retry-After %q: %+v", tc.header, err)
 			}
 		})
 	}

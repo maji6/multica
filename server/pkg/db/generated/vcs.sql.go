@@ -705,7 +705,25 @@ ON CONFLICT (connection_id, repo_owner, repo_name, pr_number) DO UPDATE SET
     additions         = CASE WHEN EXCLUDED.pr_updated_at >= vcs_pull_request.pr_updated_at THEN EXCLUDED.additions         ELSE vcs_pull_request.additions         END,
     deletions         = CASE WHEN EXCLUDED.pr_updated_at >= vcs_pull_request.pr_updated_at THEN EXCLUDED.deletions         ELSE vcs_pull_request.deletions         END,
     changed_files     = CASE WHEN EXCLUDED.pr_updated_at >= vcs_pull_request.pr_updated_at THEN EXCLUDED.changed_files     ELSE vcs_pull_request.changed_files     END,
-    head_sha          = CASE WHEN EXCLUDED.pr_updated_at >= vcs_pull_request.pr_updated_at THEN EXCLUDED.head_sha          ELSE vcs_pull_request.head_sha          END,
+    -- Gongfeng list responses can omit SHA. The same revision/branch is not
+    -- evidence of a new head; keep the known head and its checks in that case.
+    head_sha = CASE WHEN EXCLUDED.pr_updated_at >= vcs_pull_request.pr_updated_at
+        AND NOT (EXCLUDED.provider = 'gongfeng' AND EXCLUDED.head_sha = ''
+            AND EXCLUDED.pr_updated_at = vcs_pull_request.pr_updated_at
+            AND EXCLUDED.branch IS NOT DISTINCT FROM vcs_pull_request.branch)
+        THEN EXCLUDED.head_sha ELSE vcs_pull_request.head_sha END,
+    -- A genuine new head may refresh immediately, even if the previous head
+    -- failed recently. Equal/stale redeliveries must retain the failure cooldown.
+    snapshot_attempted_at = CASE WHEN EXCLUDED.pr_updated_at >= vcs_pull_request.pr_updated_at
+        AND EXCLUDED.head_sha <> vcs_pull_request.head_sha
+        AND (EXCLUDED.head_sha <> '' OR EXCLUDED.pr_updated_at > vcs_pull_request.pr_updated_at
+            OR EXCLUDED.branch IS DISTINCT FROM vcs_pull_request.branch)
+        THEN NULL ELSE vcs_pull_request.snapshot_attempted_at END,
+    snapshot_error = CASE WHEN EXCLUDED.pr_updated_at >= vcs_pull_request.pr_updated_at
+        AND EXCLUDED.head_sha <> vcs_pull_request.head_sha
+        AND (EXCLUDED.head_sha <> '' OR EXCLUDED.pr_updated_at > vcs_pull_request.pr_updated_at
+            OR EXCLUDED.branch IS DISTINCT FROM vcs_pull_request.branch)
+        THEN '' ELSE vcs_pull_request.snapshot_error END,
     updated_at        = now()
 RETURNING id, workspace_id, connection_id, provider, repo_owner, repo_name, pr_number, title, state, html_url, branch, head_sha, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, additions, deletions, changed_files, created_at, updated_at, snapshot_head_sha, snapshot_fetched_at, snapshot, snapshot_error, snapshot_attempted_at
 `

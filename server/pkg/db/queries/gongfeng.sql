@@ -31,7 +31,9 @@ WHERE connection_id = $1;
 SELECT gr.* FROM gongfeng_repository gr JOIN vcs_connection vc ON vc.id = gr.connection_id
 WHERE vc.provider = 'gongfeng' AND
     (gr.attempted_at IS NULL OR gr.attempted_at < now() - CASE WHEN gr.sync_error <> '' THEN interval '5 minutes' ELSE interval '1 minute' END)
-ORDER BY gr.attempted_at NULLS FIRST LIMIT 20;
+-- Rotate across bounded batches even when an entire connection is paused.
+ORDER BY (ROW(gr.connection_id, gr.project_id) > ROW(sqlc.arg('after_connection')::uuid, sqlc.arg('after_project')::bigint)) DESC,
+    gr.connection_id, gr.project_id LIMIT 20;
 
 -- name: BeginGongfengRepositorySync :one
 UPDATE gongfeng_repository SET attempted_at = now(), scan_started_at = COALESCE(scan_started_at, now())
@@ -48,7 +50,7 @@ SELECT pr.* FROM vcs_pull_request pr JOIN vcs_connection vc ON vc.id = pr.connec
 WHERE pr.provider = 'gongfeng' AND pr.state IN ('open', 'draft')
     AND EXISTS (SELECT 1 FROM issue_vcs_pull_request ipr WHERE ipr.pull_request_id = pr.id)
     AND (pr.snapshot_attempted_at IS NULL OR (pr.snapshot_head_sha <> pr.head_sha AND pr.snapshot_error = '') OR pr.snapshot_attempted_at < now() - CASE WHEN pr.snapshot_error <> '' THEN interval '5 minutes' ELSE interval '2 minutes' END)
-ORDER BY pr.snapshot_fetched_at NULLS FIRST LIMIT 40;
+ORDER BY (pr.id > sqlc.arg('after_id')::uuid) DESC, pr.id LIMIT 40;
 
 -- name: SaveGongfengSnapshot :execrows
 UPDATE vcs_pull_request SET snapshot_head_sha = $2, snapshot_fetched_at = now(), snapshot_attempted_at = now(), snapshot = $3, snapshot_error = ''

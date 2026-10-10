@@ -268,6 +268,7 @@ func TestGongfengHistoryPaginationResumesAfterFailure(t *testing.T) {
 		t.Fatalf("failed page progress %+v", row)
 	}
 	failPageTwo = false
+	worker.now = func() time.Time { return time.Now().Add(6 * time.Minute) }
 	worker.syncRepository(ctx, row)
 	row = load()
 	if row.NextPage != 1 || !row.SyncedAt.Valid || row.ScanStartedAt.Valid || row.SyncError != "" {

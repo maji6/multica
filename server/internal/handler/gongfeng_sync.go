@@ -3,8 +3,10 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,19 +23,37 @@ type gongfengJob struct {
 	pr         *db.VcsPullRequest
 }
 
-// A small bounded queue serves webhook, page-visit and persisted sweep triggers.
-// Dropped queue entries remain discoverable by the next database sweep.
+const gongfengFailureBackoff = 5 * time.Minute
+
+type gongfengRateLimit struct {
+	until    time.Time
+	revision pgtype.Timestamptz
+}
+
+// A bounded queue serves webhooks, page visits and persisted sweeps. Dropped
+// open-MR/repository jobs recover on sweeps; terminal MRs need a later event/view.
 type gongfengSync struct {
 	h               *Handler
 	queue           chan gongfengJob
 	mu              sync.Mutex
 	pending         map[string]bool
+	inFlight        map[string]bool
+	trailing        map[string]gongfengJob
+	rateLimits      map[pgtype.UUID]gongfengRateLimit
+	now             func() time.Time
+	sweepPR         pgtype.UUID
+	sweepRepository db.ListDueGongfengRepositoriesParams
 	once            sync.Once
 	connectionLocks map[string]*gongfengConnectionLock
 }
 
 func newGongfengSync(h *Handler) *gongfengSync {
-	return &gongfengSync{h: h, queue: make(chan gongfengJob, 64), pending: map[string]bool{}, connectionLocks: map[string]*gongfengConnectionLock{}}
+	return &gongfengSync{
+		h: h, queue: make(chan gongfengJob, 64), pending: map[string]bool{},
+		inFlight: map[string]bool{}, trailing: map[string]gongfengJob{},
+		rateLimits: map[pgtype.UUID]gongfengRateLimit{}, now: time.Now,
+		connectionLocks: map[string]*gongfengConnectionLock{},
+	}
 }
 
 // Sync jobs may read concurrently, but deleting a connection or repository and
@@ -74,13 +94,16 @@ func (s *gongfengSync) lockConnection(id pgtype.UUID, write bool) func() {
 	}
 }
 
-func (s *gongfengSync) enqueue(job gongfengJob) {
+func (s *gongfengSync) enqueue(job gongfengJob, replayInFlight bool) {
 	if s == nil || !s.h.isVCSAvailable() || !s.h.isVCSConfigured() {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pending[job.key] {
+		if replayInFlight && s.inFlight[job.key] {
+			s.trailing[job.key] = job
+		}
 		return
 	}
 	select {
@@ -90,24 +113,26 @@ func (s *gongfengSync) enqueue(job gongfengJob) {
 	}
 }
 func (s *gongfengSync) enqueueRepository(repo db.GongfengRepository) {
-	s.enqueue(gongfengJob{key: fmt.Sprintf("repo:%s:%d", uuidToString(repo.ConnectionID), repo.ProjectID), repository: &repo})
+	s.enqueue(gongfengJob{key: fmt.Sprintf("repo:%s:%d", uuidToString(repo.ConnectionID), repo.ProjectID), repository: &repo}, true)
 }
 func (s *gongfengSync) enqueuePR(pr db.VcsPullRequest) {
 	if pr.Provider == "gongfeng" {
-		s.enqueue(gongfengJob{key: "pr:" + uuidToString(pr.ID), pr: &pr})
+		s.enqueue(gongfengJob{key: "pr:" + uuidToString(pr.ID), pr: &pr}, true)
 	}
 }
 func (s *gongfengSync) onView(pr db.ListVCSPullRequestsByIssueRow) {
 	if pr.Provider != "gongfeng" {
 		return
 	}
-	if pr.SnapshotHeadSha == pr.HeadSha && pr.SnapshotAttemptedAt.Valid && time.Since(pr.SnapshotAttemptedAt.Time) < time.Minute {
+	// Failed attempts need a cooldown even before the first successful snapshot.
+	// A new head clears this marker in UpsertVCSPullRequest.
+	if pr.SnapshotError != "" && pr.SnapshotAttemptedAt.Valid && s.now().Sub(pr.SnapshotAttemptedAt.Time) < gongfengFailureBackoff {
 		return
 	}
-	if pr.SnapshotHeadSha == pr.HeadSha && pr.HeadSha != "" && pr.SnapshotFetchedAt.Valid && time.Since(pr.SnapshotFetchedAt.Time) < time.Minute {
+	if pr.SnapshotHeadSha == pr.HeadSha && pr.HeadSha != "" && pr.SnapshotFetchedAt.Valid && s.now().Sub(pr.SnapshotFetchedAt.Time) < time.Minute {
 		return
 	}
-	s.enqueue(gongfengJob{key: "pr:" + uuidToString(pr.ID), pr: &db.VcsPullRequest{ID: pr.ID, WorkspaceID: pr.WorkspaceID, ConnectionID: pr.ConnectionID}})
+	s.enqueue(gongfengJob{key: "pr:" + uuidToString(pr.ID), pr: &db.VcsPullRequest{ID: pr.ID, WorkspaceID: pr.WorkspaceID, ConnectionID: pr.ConnectionID}}, false)
 }
 func (h *Handler) StartGongfengSync(ctx context.Context) {
 	if !h.isVCSAvailable() || !h.isVCSConfigured() {
@@ -116,25 +141,7 @@ func (h *Handler) StartGongfengSync(ctx context.Context) {
 	s := h.GongfengSync
 	s.once.Do(func() {
 		for i := 0; i < 2; i++ {
-			go func() {
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case job := <-s.queue:
-						jobCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-						if job.repository != nil {
-							s.syncRepository(jobCtx, *job.repository)
-						} else if job.pr != nil {
-							s.refreshPR(jobCtx, *job.pr)
-						}
-						cancel()
-						s.mu.Lock()
-						delete(s.pending, job.key)
-						s.mu.Unlock()
-					}
-				}
-			}()
+			go s.worker(ctx)
 		}
 		go func() {
 			s.sweep(ctx)
@@ -151,21 +158,86 @@ func (h *Handler) StartGongfengSync(ctx context.Context) {
 		}()
 	})
 }
+
+// Views join the current request; only change/sweep triggers retain a trailing
+// refresh. Otherwise our own snapshot broadcasts could keep a worker busy forever.
+func (s *gongfengSync) worker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case job := <-s.queue:
+			s.mu.Lock()
+			s.inFlight[job.key] = true
+			s.mu.Unlock()
+			jobCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+			if job.repository != nil {
+				s.syncRepository(jobCtx, *job.repository)
+			} else if job.pr != nil {
+				s.refreshPR(jobCtx, *job.pr)
+			}
+			cancel()
+			s.mu.Lock()
+			delete(s.inFlight, job.key)
+			delete(s.pending, job.key)
+			if next, ok := s.trailing[job.key]; ok {
+				delete(s.trailing, job.key)
+				select {
+				case s.queue <- next:
+					s.pending[job.key] = true
+				default:
+					slog.Warn("gongfeng: refresh queue full; later triggers will retry")
+				}
+			}
+			s.mu.Unlock()
+		}
+	}
+}
+
+func (s *gongfengSync) rateLimited(conn db.VcsConnection) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	for id, limit := range s.rateLimits {
+		if !now.Before(limit.until) || (id == conn.ID && limit.revision != conn.UpdatedAt) {
+			delete(s.rateLimits, id)
+		}
+	}
+	_, limited := s.rateLimits[conn.ID]
+	return limited
+}
+
+func (s *gongfengSync) recordRateLimit(conn db.VcsConnection, err error) {
+	var apiErr *vcs.GongfengAPIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusTooManyRequests {
+		return
+	}
+	until := s.now().Add(max(apiErr.RetryAfter, gongfengFailureBackoff))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.rateLimits[conn.ID]
+	if previous.revision != conn.UpdatedAt || until.After(previous.until) {
+		s.rateLimits[conn.ID] = gongfengRateLimit{until: until, revision: conn.UpdatedAt}
+	}
+}
+
 func (s *gongfengSync) sweep(ctx context.Context) {
-	repos, err := s.h.Queries.ListDueGongfengRepositories(ctx)
+	repos, err := s.h.Queries.ListDueGongfengRepositories(ctx, s.sweepRepository)
 	if err != nil {
 		slog.Warn("gongfeng: repository sweep failed", "err", err)
 		return
 	}
 	for _, repo := range repos {
+		s.sweepRepository = db.ListDueGongfengRepositoriesParams{AfterConnection: repo.ConnectionID, AfterProject: repo.ProjectID}
 		s.enqueueRepository(repo)
 	}
-	prs, err := s.h.Queries.ListDueGongfengPullRequests(ctx)
+	prs, err := s.h.Queries.ListDueGongfengPullRequests(ctx, s.sweepPR)
 	if err != nil {
 		slog.Warn("gongfeng: MR sweep failed", "err", err)
 		return
 	}
 	for _, pr := range prs {
+		s.sweepPR = pr.ID
 		s.enqueuePR(pr)
 	}
 }
@@ -182,6 +254,9 @@ func (s *gongfengSync) syncRepository(ctx context.Context, queued db.GongfengRep
 	if err != nil {
 		return
 	}
+	if s.rateLimited(conn) {
+		return
+	}
 	client, err := h.gongfengClient(conn)
 	if err != nil {
 		return
@@ -195,6 +270,7 @@ func (s *gongfengSync) syncRepository(ctx context.Context, queued db.GongfengRep
 	defer func() {
 		message := ""
 		if err != nil {
+			s.recordRateLimit(conn, err)
 			message = err.Error()
 		}
 		// Use the parent server lifetime for persistence even when this API batch timed out.
@@ -277,12 +353,16 @@ func (s *gongfengSync) refreshPR(ctx context.Context, queued db.VcsPullRequest) 
 	if err != nil {
 		return
 	}
+	if s.rateLimited(conn) {
+		return
+	}
 	client, err := h.gongfengClient(conn)
 	if err != nil {
 		return
 	}
 	defer func() {
 		if err != nil {
+			s.recordRateLimit(conn, err)
 			saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
 			_ = h.Queries.FailGongfengSnapshot(saveCtx, db.FailGongfengSnapshotParams{ID: pr.ID, SnapshotError: err.Error(), HeadSha: pr.HeadSha, PrUpdatedAt: pr.PrUpdatedAt})
