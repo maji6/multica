@@ -4337,6 +4337,9 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !transitioned {
+		if !h.recordExecutionExit(w, r, task) {
+			return
+		}
 		writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
 		return
 	}
@@ -4364,6 +4367,9 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("complete task: failed to revoke task tokens", "task_id", uuidToString(task.ID), "error", err)
 	}
 
+	if !h.recordExecutionExit(w, r, task) {
+		return
+	}
 	slog.Info("task completed", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
 }
@@ -5043,6 +5049,9 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 		return
 	}
 	if !transitioned {
+		if !h.recordExecutionExit(w, r, task) {
+			return
+		}
 		writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
 		return
 	}
@@ -5055,6 +5064,9 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 		slog.Warn("fail task: failed to revoke task tokens", "task_id", uuidToString(task.ID), "error", err)
 	}
 
+	if !h.recordExecutionExit(w, r, task) {
+		return
+	}
 	slog.Info("task failed", "task_id", taskID, "agent_id", uuidToString(task.AgentID), "task_error", req.Error, "failure_reason", req.FailureReason)
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
 }
@@ -5319,6 +5331,12 @@ func (h *Handler) AckTaskCancelled(w http.ResponseWriter, r *http.Request) {
 			slog.Error("cancel ack: record preserved-work error failed",
 				"task_id", taskID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to record task error")
+			return
+		}
+		delivered = true
+	}
+	if task.Status == "cancelled" || task.Status == "completed" || task.Status == "failed" {
+		if !h.recordExecutionExit(w, r, &task) {
 			return
 		}
 		delivered = true

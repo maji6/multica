@@ -11,7 +11,8 @@ import (
 )
 
 type AppConfig struct {
-	CdnDomain string `json:"cdn_domain"`
+	TaskExecutionExitSupported bool   `json:"task_execution_exit_supported"`
+	CdnDomain                  string `json:"cdn_domain"`
 	// CdnSigned tells clients that the CDN domain above serves PRIVATE
 	// content through time-bounded signed URLs (CloudFront signing is
 	// enabled). When true, a raw storage URL on the CDN domain is NOT
@@ -114,6 +115,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		AgentConversationStartersSupported: true,
 		IssueCreatePropertiesSupported:     true,
 		CommentDeleteKeepRepliesSupported:  true,
+		TaskExecutionExitSupported:         true,
 		AllowSignup:                        os.Getenv("ALLOW_SIGNUP") != "false",
 		GoogleClientID:                     os.Getenv("GOOGLE_CLIENT_ID"),
 		WorkspaceCreationDisabled:          os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",

@@ -358,6 +358,7 @@ type TaskCancellationActor struct {
 }
 
 type AgentTaskResponse struct {
+	ExecutionExitedAt        *string                `json:"execution_exited_at,omitempty"`
 	StartClaimSupported      bool                   `json:"start_claim_supported,omitempty"`
 	CancelledByCommentChange bool                   `json:"cancelled_by_comment_change,omitempty"`
 	CancelledBy              *TaskCancellationActor `json:"cancelled_by,omitempty"`
@@ -829,7 +830,17 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	if t.HandoffNote.Valid {
 		handoffNote = t.HandoffNote.String
 	}
+	var exit struct {
+		TaskID string `json:"execution_exit_task_id"`
+		At     string `json:"execution_exited_at"`
+	}
+	_ = json.Unmarshal(t.Context, &exit)
+	var exitedAt *string
+	if exit.TaskID == uuidToString(t.ID) && exit.At != "" && (t.Status == "completed" || t.Status == "failed" || t.Status == "cancelled") {
+		exitedAt = &exit.At
+	}
 	return AgentTaskResponse{
+		ExecutionExitedAt: exitedAt,
 		// Task-scoped provenance must not transfer through copied retry context.
 		CancelledByCommentChange: t.Status == "cancelled" && cancellation.TaskID != "" && cancellation.TaskID == uuidToString(t.ID),
 		CancelledBy:              taskCancellationActorToResponse(t),
