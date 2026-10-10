@@ -78,6 +78,9 @@ export function GongfengRepositoryPicker({ wsId, connection, onClose, onImport }
                     <p className={`mt-1 text-caption ${repo.sync_error ? "text-destructive" : "text-muted-foreground"}`}>
                       {repo.sync_error || (repo.syncing ? t(($) => $.vcs.gongfeng_syncing) : t(($) => $.vcs.gongfeng_synced))}
                     </p>
+                    <p className={`mt-1 text-caption ${repo.webhook_configured ? "text-muted-foreground" : "text-warning"}`}>
+                      {repo.webhook_configured ? t(($) => $.vcs.gongfeng_webhook_configured) : t(($) => $.vcs.gongfeng_webhook_not_configured)}
+                    </p>
                   </div>
                   <Button variant="ghost" size="icon-sm" disabled={busy} aria-label={`${t(($) => $.vcs.gongfeng_retry)}: ${repo.path}`} onClick={() => void manage(repo, false)}><RefreshCw /></Button>
                   <Button variant="ghost" size="icon-sm" disabled={busy} aria-label={`${t(($) => $.vcs.gongfeng_remove)}: ${repo.path}`} onClick={() => void manage(repo, true)}><Trash2 /></Button>

@@ -29,9 +29,10 @@ it("enables the selected repository and keeps archived repositories disabled", a
 });
 it("imports already-enabled repositories without enabling them twice", async () => {
   const onImport = vi.fn().mockResolvedValue(true); const onClose = vi.fn();
-  mocks.query.data = { pages: [{ repositories: [repo], selected: [repo] }] };
+  mocks.query.data = { pages: [{ repositories: [repo], selected: [{ ...repo, webhook_configured: true }] }] };
   const user = userEvent.setup();
   renderWithI18n(<GongfengRepositoryPicker wsId="ws" connection={connection} onClose={onClose} onImport={onImport} />);
+  expect(screen.getByText("Webhook configured")).toBeVisible();
   await user.click(screen.getByRole("checkbox", { name: "acme/widget" }));
   await user.click(screen.getByRole("button", { name: "Add repositories" }));
   await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
@@ -51,6 +52,7 @@ it("exposes failed repository sync and its retry action", async () => {
   const user = userEvent.setup();
   renderWithI18n(<GongfengRepositoryPicker wsId="ws" connection={connection} onClose={vi.fn()} />);
   expect(screen.getByText("Webhook permission denied")).toBeVisible();
+  expect(screen.getByText("Webhook not configured")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Retry sync: acme/widget" }));
   await waitFor(() => expect(mocks.enable).toHaveBeenCalledWith("ws", "conn", 55, true));
 });

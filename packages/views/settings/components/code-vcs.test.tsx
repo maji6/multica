@@ -2,18 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithI18n } from "../../test/i18n";
+import type { VCSConnection } from "@multica/core/types";
 
 const mockConnect = vi.hoisted(() => vi.fn());
 const mockRotate = vi.hoisted(() => vi.fn());
 const mockDelete = vi.hoisted(() => vi.fn());
 const listing = vi.hoisted(() => ({
   current: {
-    connections: [] as {
-      id: string;
-      provider: "forgejo" | "gitea" | "gitlab" | "gongfeng";
-      instance_url: string;
-      account_login: string;
-    }[],
+    connections: [] as VCSConnection[],
     configured: true,
     can_manage: true,
   },
@@ -43,6 +39,10 @@ const CONNECTION = {
   provider: "gitea" as const,
   instance_url: "https://git.acme.dev",
   account_login: "bot",
+  workspace_id: "ws-1",
+  webhook_url: "https://hooks.example/api/webhooks/vcs/vcs-1",
+  webhook_path: "/api/webhooks/vcs/vcs-1",
+  created_at: "",
 };
 
 beforeEach(() => {
@@ -52,6 +52,37 @@ beforeEach(() => {
 });
 
 describe("VCSConnectionRows", () => {
+  it("lets an admin view and copy an existing Gongfeng webhook without rotating its secret", async () => {
+    listing.current.connections = [{ ...CONNECTION, provider: "gongfeng", instance_url: "https://git.code.tencent.com" }];
+    const user = userEvent.setup();
+    const clipboard = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    renderWithI18n(<VCSConnectionRows />);
+    await user.click(screen.getByRole("button", { name: "Actions for https://git.code.tencent.com" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View webhook" }));
+    const dialog = await screen.findByRole("dialog", { name: "Webhook" });
+    expect(within(dialog).getByLabelText("Webhook URL")).toHaveValue(CONNECTION.webhook_url);
+    expect(within(dialog).queryByLabelText("Webhook secret")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Copy: Webhook URL" }));
+    expect(clipboard).toHaveBeenCalledWith(CONNECTION.webhook_url);
+    expect(mockRotate).not.toHaveBeenCalled();
+    expect(mockConnect).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Gongfeng repositories" }));
+    expect(await screen.findByRole("dialog", { name: "Gongfeng repositories" })).toBeVisible();
+  });
+
+  it("shows the receiver path when a connection has no public webhook URL", async () => {
+    listing.current.connections = [{ ...CONNECTION, webhook_url: "" }];
+    const user = userEvent.setup();
+    renderWithI18n(<VCSConnectionRows />);
+    await user.click(screen.getByRole("button", { name: "Actions for https://git.acme.dev" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View webhook" }));
+    const dialog = await screen.findByRole("dialog", { name: "Webhook" });
+    expect(within(dialog).getByLabelText("Webhook URL")).toHaveValue(CONNECTION.webhook_path);
+    await user.click(within(dialog).getByText("Close", { selector: "button", exact: true }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(mockRotate).not.toHaveBeenCalled();
+  });
+
   it("connects official Gongfeng and opens repository selection", async () => {
     mockConnect.mockResolvedValue({
       ...CONNECTION,

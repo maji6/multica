@@ -4,7 +4,7 @@ import { GongfengRepositoryPicker } from "./gongfeng-repository-picker";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Copy, FolderGit2, GitBranch, MoreHorizontal, RefreshCw, Unplug } from "lucide-react";
+import { Copy, FolderGit2, GitBranch, MoreHorizontal, RefreshCw, Unplug, Webhook } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
@@ -43,7 +43,7 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { vcsConnectionsOptions } from "@multica/core/vcs";
 import { api } from "@multica/core/api";
-import type { ConnectVCSResponse, VCSConnection, VCSProvider } from "@multica/core/types";
+import type { VCSConnection, VCSProvider } from "@multica/core/types";
 import { useT } from "../../i18n";
 import { SettingsRow } from "./settings-layout";
 import { HostMark, HostStatus } from "./code-host";
@@ -59,8 +59,8 @@ const PROVIDER_LABELS: Record<VCSProvider, string> = {
 /**
  * Token-based Git provider connections, rendered as rows of the
  * Code page's "Code hosting" card: one row per connected instance, then a row
- * to connect another. Connecting and rotating both end on the one-time webhook
- * secret, shown in a dialog the user has to dismiss.
+ * to connect another. Existing webhook addresses can be viewed without rotating
+ * secrets. Gongfeng configures hooks through repository selection.
  */
 export function VCSConnectionRows() {
   const { t } = useT("settings");
@@ -80,7 +80,8 @@ export function VCSConnectionRows() {
   const [instanceUrl, setInstanceUrl] = useState("");
   const [token, setToken] = useState("");
   const [connecting, setConnecting] = useState(false);
-  const [webhook, setWebhook] = useState<ConnectVCSResponse | null>(null);
+  const [webhook, setWebhook] = useState<(VCSConnection & { webhook_secret?: string }) | null>(null);
+  const webhookSecret = webhook?.webhook_secret;
   const [rotateTarget, setRotateTarget] = useState<string | null>(null);
   const [rotating, setRotating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -204,6 +205,10 @@ export function VCSConnectionRows() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-auto">
                 {c.provider === "gongfeng" ? <DropdownMenuItem onClick={() => setRepositoryConnection(c)}><FolderGit2 />{t(($) => $.vcs.gongfeng_repositories)}</DropdownMenuItem> : null}
+                <DropdownMenuItem onClick={() => setWebhook(c)}>
+                  <Webhook />
+                  {t(($) => $.vcs.view_webhook)}
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setRotateTarget(c.id)}>
                   <RefreshCw />
                   {t(($) => $.vcs.regenerate_webhook)}
@@ -354,9 +359,11 @@ export function VCSConnectionRows() {
       >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{t(($) => $.vcs.webhook_setup_title)}</DialogTitle>
+            <DialogTitle>{webhookSecret ? t(($) => $.vcs.webhook_setup_title) : t(($) => $.vcs.webhook_view_title)}</DialogTitle>
             <DialogDescription>
-              {webhook?.provider === "gongfeng" ? t(($) => $.vcs.gongfeng_webhook_setup_description) : t(($) => $.vcs.webhook_setup_description)}
+              {webhookSecret
+                ? webhook?.provider === "gongfeng" ? t(($) => $.vcs.gongfeng_webhook_setup_description) : t(($) => $.vcs.webhook_setup_description)
+                : webhook?.provider === "gongfeng" ? t(($) => $.vcs.gongfeng_webhook_view_description) : t(($) => $.vcs.webhook_view_description)}
             </DialogDescription>
           </DialogHeader>
           {webhook ? (
@@ -368,19 +375,23 @@ export function VCSConnectionRows() {
                 onCopy={copy}
                 copyLabel={t(($) => $.vcs.copy)}
               />
-              <CopyField
-                id="vcs-webhook-secret"
-                label={t(($) => $.vcs.webhook_secret_label)}
-                value={webhook.webhook_secret}
-                onCopy={copy}
-                copyLabel={t(($) => $.vcs.copy)}
-                mono
-              />
-              <p className="text-caption text-warning">{t(($) => $.vcs.webhook_secret_warning)}</p>
+              {webhookSecret ? (
+                <>
+                  <CopyField
+                    id="vcs-webhook-secret"
+                    label={t(($) => $.vcs.webhook_secret_label)}
+                    value={webhookSecret}
+                    onCopy={copy}
+                    copyLabel={t(($) => $.vcs.copy)}
+                    mono
+                  />
+                  <p className="text-caption text-warning">{t(($) => $.vcs.webhook_secret_warning)}</p>
+                </>
+              ) : null}
             </div>
           ) : null}
           <DialogFooter>
-            <Button onClick={() => { if (webhook?.provider === "gongfeng") setRepositoryConnection(webhook); setWebhook(null); }}>{webhook?.provider === "gongfeng" ? t(($) => $.vcs.gongfeng_repositories) : t(($) => $.vcs.webhook_done)}</Button>
+            <Button onClick={() => { if (webhook?.provider === "gongfeng") setRepositoryConnection(webhook); setWebhook(null); }}>{webhook?.provider === "gongfeng" ? t(($) => $.vcs.gongfeng_repositories) : webhookSecret ? t(($) => $.vcs.webhook_done) : t(($) => $.vcs.webhook_close)}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
