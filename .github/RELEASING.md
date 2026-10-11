@@ -44,9 +44,14 @@ use `go version -m <binary>` when auditing a downloaded release artifact.
 ## Gongfeng fork container channel
 
 In `maji6/multica`, the Gongfeng Images workflow publishes backend and web images
-from `codex/gongfeng-integration`. After verification and both multi-platform
+from `codex/gongfeng-integration` for `linux/amd64`. After verification and both
 manifests succeed, it updates `gongfeng-stable` for both images. Immutable
 `gongfeng-<commit SHA>` tags remain available for version identification.
+
+The build matrix has two jobs: backend and web, both on native amd64 runners.
+ARM servers require adding arm64 to the build matrix, selecting a suitable
+runner, and updating manifest publication and architecture validation together.
+This server image scope does not change the official Mac or Windows runtime.
 
 Only the current branch head can advance the stable channel; rerunning an older
 commit does not overwrite it. The two registry tags are separate writes, so wait
