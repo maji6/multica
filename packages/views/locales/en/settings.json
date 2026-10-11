@@ -843,7 +843,8 @@
     "contact_admin": "Ask a workspace admin to connect a Git provider instance.",
     "webhook_setup_title": "Finish setup in your provider",
     "webhook_setup_description": "Add a webhook on your repository or organisation with the URL and secret below. Forgejo/Gitea: choose the Gitea format and the Pull Request (and Commit Status) events. GitLab: paste the secret as the token and enable Merge request and Pipeline events.",
-    "gongfeng_webhook_setup_description": "In Gongfeng repository settings, add a webhook with the URL below, use the secret as the token, and enable Merge request events.",
+    "gongfeng_webhook_rotated_title": "Webhook secret regenerated",
+    "gongfeng_webhook_rotated_description": "Multica is updating webhooks for selected repositories automatically. Update any webhooks you added manually with the new secret below.",
     "webhook_url_label": "Webhook URL",
     "webhook_secret_label": "Webhook secret",
     "webhook_secret_warning": "Copy the secret now. It is shown only once and cannot be retrieved later.",
@@ -867,6 +868,7 @@
     "regenerate_webhook": "Regenerate webhook",
     "rotate_confirm_title": "Regenerate webhook secret?",
     "rotate_confirm_description": "The current webhook secret will stop working immediately. Deliveries from your Git provider will fail until you update the webhook secret in provider settings.",
+    "gongfeng_rotate_confirm_description": "The current webhook secret will stop working immediately. Multica will update selected repository webhooks automatically. You must update any webhooks you added manually.",
     "rotate_confirm_cancel": "Cancel",
     "rotate_confirm_action": "Regenerate",
     "rotating": "Regenerating...",
@@ -891,7 +893,9 @@
     "gongfeng_retry": "Retry sync",
     "gongfeng_remove": "Stop syncing",
     "gongfeng_archived": "Archived",
-    "gongfeng_cleanup_warning": "Disconnected. Some Gongfeng webhooks could not be removed; remove them in Gongfeng. {{error}}"
+    "gongfeng_cleanup_warning": "Disconnected. Some Gongfeng webhooks could not be removed; remove them in Gongfeng. {{error}}",
+    "gongfeng_browse_failed": "Could not browse Gongfeng repositories. Selected repositories are still available. {{error}}",
+    "gongfeng_retry_browse": "Retry browsing"
   },
   "lark": {
     "section_title": "Lark",

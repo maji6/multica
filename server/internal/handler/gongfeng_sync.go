@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/vcs"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -261,12 +262,13 @@ func (s *gongfengSync) syncRepository(ctx context.Context, queued db.GongfengRep
 	if err != nil {
 		return
 	}
-	row, err = h.Queries.BeginGongfengRepositorySync(ctx, db.BeginGongfengRepositorySyncParams{ConnectionID: row.ConnectionID, ProjectID: row.ProjectID, UpdatedAt: row.UpdatedAt})
+	row, err = h.Queries.ClaimGongfengRepositorySync(ctx, db.ClaimGongfengRepositorySyncParams{ConnectionID: row.ConnectionID, ProjectID: row.ProjectID, UpdatedAt: row.UpdatedAt})
 	if err != nil {
 		return
 	}
 	next := int(row.NextPage)
 	complete := false
+	createdHook := false
 	defer func() {
 		message := ""
 		if err != nil {
@@ -276,26 +278,46 @@ func (s *gongfengSync) syncRepository(ctx context.Context, queued db.GongfengRep
 		// Use the parent server lifetime for persistence even when this API batch timed out.
 		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_, saveErr := h.Queries.SaveGongfengRepositorySync(saveCtx, db.SaveGongfengRepositorySyncParams{ConnectionID: row.ConnectionID, ProjectID: row.ProjectID, UpdatedAt: row.UpdatedAt, HookID: row.HookID, HookRevision: row.HookRevision, NextPage: int32(next), SyncError: message, Completed: complete})
+		count, saveErr := h.Queries.SaveGongfengRepositorySync(saveCtx, db.SaveGongfengRepositorySyncParams{
+			ConnectionID: row.ConnectionID, ProjectID: row.ProjectID, UpdatedAt: row.UpdatedAt,
+			LeaseID: row.SyncLeaseID, ConnectionUpdatedAt: conn.UpdatedAt, HookID: row.HookID,
+			HookRevision: row.HookRevision, NextPage: int32(next), SyncError: message, Completed: complete,
+		})
 		if saveErr != nil {
 			slog.Warn("gongfeng: save sync progress failed", "err", saveErr)
+		} else if count == 0 && createdHook {
+			// A stop, disconnect, or credential rotation fenced this worker
+			// after it touched the remote hook. Stopped/deleted scopes remove it;
+			// a rotated live connection gets a trailing repair with the new secret.
+			current, repoErr := h.Queries.GetGongfengRepository(saveCtx, db.GetGongfengRepositoryParams{ConnectionID: row.ConnectionID, ProjectID: row.ProjectID})
+			_, connErr := h.Queries.GetVCSConnectionByID(saveCtx, row.ConnectionID)
+			if repoErr == nil && current.Enabled && connErr == nil {
+				s.enqueueRepository(current)
+			} else if cleanupErr := client.RemoveHook(saveCtx, row.ProjectID, row.HookID, h.vcsWebhookURL(uuidToString(conn.ID))); cleanupErr != nil {
+				slog.Warn("gongfeng: stale worker webhook cleanup failed", "connection_id", uuidToString(conn.ID), "project_id", row.ProjectID, "err", cleanupErr)
+			}
 		}
 	}()
+	var project vcs.GongfengProject
+	project, err = client.Project(ctx, strconv.FormatInt(row.ProjectID, 10))
+	if err != nil {
+		return
+	}
+	if project.ID != row.ProjectID {
+		err = errors.New("Gongfeng repository identity changed")
+		return
+	}
+	var allowed bool
+	row, allowed, err = h.reconcileGongfengProject(ctx, conn, project, true)
+	if err != nil || !allowed {
+		return
+	}
 	if row.HookID == 0 || !row.HookRevision.Valid || !row.HookRevision.Time.Equal(conn.UpdatedAt.Time) {
-		var secret string
-		secret, err = h.openVCSSecret(conn.WebhookSecretEncrypted)
+		row, createdHook, err = s.ensureRepositoryHook(ctx, conn, row, client)
 		if err != nil {
 			return
 		}
-		hookID, hookErr := client.EnsureHook(ctx, row.ProjectID, h.vcsWebhookURL(uuidToString(conn.ID)), secret)
-		if hookErr != nil {
-			err = hookErr
-			return
-		}
-		row.HookID = hookID
-		row.HookRevision = conn.UpdatedAt
 	}
-	project := vcs.GongfengProject{ID: row.ProjectID, Path: row.Path, WebURL: row.WebUrl}
 	var mrs []vcs.GongfengMR
 	var nextPage int
 	mrs, nextPage, err = client.MergeRequests(ctx, strconv.FormatInt(row.ProjectID, 10), int(row.NextPage))
@@ -318,7 +340,7 @@ func (s *gongfengSync) syncRepository(ctx context.Context, queued db.GongfengRep
 		if err != nil {
 			return
 		}
-		pr, getErr := h.Queries.GetVCSPullRequestByKey(ctx, db.GetVCSPullRequestByKeyParams{ConnectionID: conn.ID, RepoOwner: event.RepoOwner, RepoName: event.RepoName, PrNumber: event.Number})
+		pr, getErr := h.Queries.GetGongfengPullRequestByProjectKey(ctx, db.GetGongfengPullRequestByProjectKeyParams{ConnectionID: conn.ID, GongfengProjectID: event.ProjectID, PrNumber: event.Number})
 		if getErr != nil {
 			err = getErr
 			return
@@ -341,6 +363,60 @@ func (s *gongfengSync) syncRepository(ctx context.Context, queued db.GongfengRep
 		next = nextPage
 	}
 }
+
+// ensureRepositoryHook holds the connection revision lock across the remote
+// side effect and its local ID write. Disconnect/stop can then wait, capture
+// the final hook identity, revoke it, and return without a late unknown hook.
+func (s *gongfengSync) ensureRepositoryHook(ctx context.Context, conn db.VcsConnection, row db.GongfengRepository, client *vcs.GongfengClient) (db.GongfengRepository, bool, error) {
+	h := s.h
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return row, false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := h.Queries.WithTx(tx)
+	if _, err := q.LockVCSConnectionRevision(ctx, db.LockVCSConnectionRevisionParams{
+		ID: conn.ID, WorkspaceID: conn.WorkspaceID, Provider: conn.Provider, UpdatedAt: conn.UpdatedAt,
+	}); err != nil {
+		return row, false, err
+	}
+	current, err := q.LockGongfengRepository(ctx, db.LockGongfengRepositoryParams{ConnectionID: row.ConnectionID, ProjectID: row.ProjectID})
+	if err != nil {
+		return row, false, err
+	}
+	if !current.Enabled || current.UpdatedAt != row.UpdatedAt || current.SyncLeaseID != row.SyncLeaseID {
+		return row, false, pgx.ErrNoRows
+	}
+	secret, err := h.openVCSSecret(conn.WebhookSecretEncrypted)
+	if err != nil {
+		return row, false, err
+	}
+	endpoint := h.vcsWebhookURL(uuidToString(conn.ID))
+	hookID, err := client.EnsureHook(ctx, row.ProjectID, endpoint, secret)
+	if err != nil {
+		return row, false, err
+	}
+	remove := func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if cleanupErr := client.RemoveHook(cleanupCtx, row.ProjectID, hookID, endpoint); cleanupErr != nil {
+			slog.Warn("gongfeng: uncommitted webhook cleanup failed", "connection_id", uuidToString(conn.ID), "project_id", row.ProjectID, "err", cleanupErr)
+		}
+	}
+	saved, err := q.SaveGongfengRepositoryHook(ctx, db.SaveGongfengRepositoryHookParams{
+		HookID: hookID, HookRevision: conn.UpdatedAt, ConnectionID: row.ConnectionID,
+		ProjectID: row.ProjectID, UpdatedAt: row.UpdatedAt, LeaseID: row.SyncLeaseID,
+	})
+	if err != nil {
+		remove()
+		return row, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		remove()
+		return row, false, err
+	}
+	return saved, true, nil
+}
 func (s *gongfengSync) refreshPR(ctx context.Context, queued db.VcsPullRequest) {
 	unlock := s.lockConnection(queued.ConnectionID, false)
 	defer unlock()
@@ -360,22 +436,47 @@ func (s *gongfengSync) refreshPR(ctx context.Context, queued db.VcsPullRequest) 
 	if err != nil {
 		return
 	}
+	pr, err = h.Queries.ClaimGongfengSnapshot(ctx, db.ClaimGongfengSnapshotParams{ID: pr.ID, WorkspaceID: pr.WorkspaceID, ConnectionUpdatedAt: conn.UpdatedAt})
+	if err != nil {
+		return
+	}
 	defer func() {
 		if err != nil {
 			s.recordRateLimit(conn, err)
 			saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
-			_ = h.Queries.FailGongfengSnapshot(saveCtx, db.FailGongfengSnapshotParams{ID: pr.ID, SnapshotError: err.Error(), HeadSha: pr.HeadSha, PrUpdatedAt: pr.PrUpdatedAt})
-			h.publishGongfengSnapshot(saveCtx, pr)
+			count, saveErr := h.Queries.FailGongfengSnapshot(saveCtx, db.FailGongfengSnapshotParams{
+				ID: pr.ID, SnapshotError: err.Error(), HeadSha: pr.HeadSha, PrUpdatedAt: pr.PrUpdatedAt,
+				SnapshotLeaseID: pr.SnapshotLeaseID, UpdatedAt: conn.UpdatedAt,
+			})
+			if saveErr == nil && count > 0 {
+				h.publishGongfengSnapshot(saveCtx, pr)
+			}
 		}
 	}()
 	var project vcs.GongfengProject
-	project, err = client.Project(ctx, pr.RepoOwner+"/"+pr.RepoName)
+	projectRef := pr.RepoOwner + "/" + pr.RepoName
+	if pr.GongfengProjectID > 0 {
+		projectRef = strconv.FormatInt(pr.GongfengProjectID, 10)
+	}
+	project, err = client.Project(ctx, projectRef)
 	if err != nil {
 		return
 	}
-	if project.Path != pr.RepoOwner+"/"+pr.RepoName {
+	if pr.GongfengProjectID > 0 && project.ID != pr.GongfengProjectID {
 		err = fmt.Errorf("Gongfeng repository identity changed")
+		return
+	}
+	var allowed bool
+	_, allowed, err = h.reconcileGongfengProject(ctx, conn, project, true)
+	if err != nil || !allowed {
+		return
+	}
+	canonical, getErr := h.Queries.GetGongfengPullRequestByProjectKey(ctx, db.GetGongfengPullRequestByProjectKeyParams{
+		ConnectionID: conn.ID, GongfengProjectID: project.ID, PrNumber: pr.PrNumber,
+	})
+	if getErr == nil && canonical.ID != pr.ID {
+		s.enqueuePR(canonical)
 		return
 	}
 	var mr vcs.GongfengMR
@@ -398,9 +499,21 @@ func (s *gongfengSync) refreshPR(ctx context.Context, queued db.VcsPullRequest) 
 	if event.HeadSHA == "" {
 		event.HeadSHA = pr.HeadSha
 	}
+	previousHead := pr.HeadSha
 	err = h.mirrorVCSPullRequest(ctx, conn, event)
 	if err != nil {
 		return
+	}
+	// Upsert deliberately clears an older snapshot lease when it learns a new
+	// head. This worker discovered that head, so claim the refreshed row before
+	// saving its checks instead of waiting for the next background sweep.
+	if event.HeadSHA != previousHead {
+		pr, err = h.Queries.ClaimGongfengSnapshot(ctx, db.ClaimGongfengSnapshotParams{
+			ID: pr.ID, WorkspaceID: pr.WorkspaceID, ConnectionUpdatedAt: conn.UpdatedAt,
+		})
+		if err != nil {
+			return
+		}
 	}
 	pr.HeadSha = event.HeadSHA
 	pr.PrUpdatedAt = parseGHTimeRequired(event.UpdatedAt)
@@ -430,7 +543,10 @@ func (s *gongfengSync) refreshPR(ctx context.Context, queued db.VcsPullRequest) 
 		return
 	}
 	var count int64
-	count, err = h.Queries.SaveGongfengSnapshot(ctx, db.SaveGongfengSnapshotParams{ID: pr.ID, SnapshotHeadSha: event.HeadSHA, Snapshot: encoded, PrUpdatedAt: parseGHTimeRequired(event.UpdatedAt), UpdatedAt: conn.UpdatedAt})
+	count, err = h.Queries.SaveGongfengSnapshot(ctx, db.SaveGongfengSnapshotParams{
+		ID: pr.ID, SnapshotHeadSha: event.HeadSHA, Snapshot: encoded,
+		PrUpdatedAt: parseGHTimeRequired(event.UpdatedAt), SnapshotLeaseID: pr.SnapshotLeaseID, UpdatedAt: conn.UpdatedAt,
+	})
 	if err == nil && count > 0 {
 		h.publishGongfengSnapshot(ctx, pr)
 	}

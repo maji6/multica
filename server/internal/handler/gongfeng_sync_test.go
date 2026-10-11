@@ -204,6 +204,10 @@ func TestGongfengHistoryPaginationResumesAfterFailure(t *testing.T) {
 	withVCSBox(t)
 	failPageTwo := true
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/projects/55" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 55, "path_with_namespace": "acme/widget", "web_url": "https://git.code.tencent.com/acme/widget"})
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/hooks") {
 			if r.Method == "GET" {
 				_, _ = w.Write([]byte(`[]`))
@@ -293,6 +297,8 @@ func TestGongfengDisconnectWaitsForImportAndRemovesItsData(t *testing.T) {
 	var connID string
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/projects/55":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 55, "path_with_namespace": "acme/widget", "web_url": "https://git.code.tencent.com/acme/widget"})
 		case strings.HasSuffix(r.URL.Path, "/hooks") && r.Method == "GET":
 			_, _ = w.Write([]byte(`[]`))
 		case strings.HasSuffix(r.URL.Path, "/hooks") && r.Method == "POST":

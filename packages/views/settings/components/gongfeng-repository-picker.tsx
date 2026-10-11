@@ -31,6 +31,7 @@ export function GongfengRepositoryPicker({ wsId, connection, onClose, onImport }
   const enabled = query.data?.pages[0]?.selected ?? [];
   const enabledIds = new Set(enabled.map((repo) => repo.id));
   const repositories = [...new Map(query.data?.pages.flatMap((page) => page.repositories).map((repo) => [repo.id, repo])).values()];
+  const browseError = query.data?.pages.find((page) => page.browse_error)?.browse_error;
 
   async function refresh() { await qc.invalidateQueries({ queryKey: [...vcsKeys.all(wsId), "repositories", connection.id] }); }
   async function save() {
@@ -54,8 +55,12 @@ export function GongfengRepositoryPicker({ wsId, connection, onClose, onImport }
     if (busy) return;
     setBusy(true);
     try {
-      if (remove) await api.disableGongfengRepository(wsId, connection.id, repo.id);
-      else await api.enableGongfengRepository(wsId, connection.id, repo.id, true);
+      if (remove) {
+        const result = await api.disableGongfengRepository(wsId, connection.id, repo.id);
+        if (result.webhook_cleanup_error) {
+          toast.warning(result.webhook_cleanup_error);
+        }
+      } else await api.enableGongfengRepository(wsId, connection.id, repo.id, true);
       await refresh();
     } catch (error) { toast.error(error instanceof Error ? error.message : t(($) => $.vcs.gongfeng_sync_failed)); }
     finally { setBusy(false); }
@@ -96,7 +101,13 @@ export function GongfengRepositoryPicker({ wsId, connection, onClose, onImport }
               <Button variant="outline" size="sm" onClick={() => void query.refetch()}>{t(($) => $.vcs.gongfeng_retry)}</Button>
             </div>
           ) : null}
-          {!query.isPending && !query.error && repositories.length === 0 ? <p className="text-caption text-muted-foreground">{t(($) => $.vcs.gongfeng_empty)}</p> : null}
+          {browseError ? (
+            <div role="alert" className="space-y-2 text-caption text-warning">
+              <p>{t(($) => $.vcs.gongfeng_browse_failed, { error: browseError })}</p>
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => void query.refetch()}>{t(($) => $.vcs.gongfeng_retry_browse)}</Button>
+            </div>
+          ) : null}
+          {!query.isPending && !query.error && !browseError && repositories.length === 0 ? <p className="text-caption text-muted-foreground">{t(($) => $.vcs.gongfeng_empty)}</p> : null}
           <div className="space-y-1">
             {repositories.map((repo) => (
               <label key={repo.id} className={`flex cursor-pointer items-start gap-3 rounded-md p-2 hover:bg-muted ${selected.has(repo.id) ? "bg-muted" : ""}`}>

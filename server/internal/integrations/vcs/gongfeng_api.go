@@ -230,7 +230,7 @@ func (m GongfengMR) Event(project GongfengProject) (PullRequestEvent, error) {
 	if state != "open" && state != "draft" && state != "closed" && state != "merged" {
 		return PullRequestEvent{}, errors.New("unknown Gongfeng MR state")
 	}
-	ev := PullRequestEvent{Action: "sync", RepoOwner: owner, RepoName: name, Number: m.IID, Title: m.Title, Body: m.Description, State: state, HTMLURL: strings.TrimRight(project.WebURL, "/") + "/merge_requests/" + strconv.Itoa(int(m.IID)), Branch: m.SourceBranch, HeadSHA: m.SHA, AuthorLogin: m.Author.Username, AuthorAvatarURL: m.Author.AvatarURL, CreatedAt: created, UpdatedAt: updated}
+	ev := PullRequestEvent{Action: "sync", RepoOwner: owner, RepoName: name, ProjectID: project.ID, Number: m.IID, Title: m.Title, Body: m.Description, State: state, HTMLURL: strings.TrimRight(project.WebURL, "/") + "/merge_requests/" + strconv.Itoa(int(m.IID)), Branch: m.SourceBranch, HeadSHA: m.SHA, AuthorLogin: m.Author.Username, AuthorAvatarURL: m.Author.AvatarURL, CreatedAt: created, UpdatedAt: updated}
 	if state == "merged" {
 		ev.Action = "merge"
 		ev.MergedAt = updated
@@ -441,21 +441,61 @@ func (c *GongfengClient) EnsureHook(ctx context.Context, project int64, endpoint
 	return saved.ID, err
 }
 func (c *GongfengClient) RemoveHook(ctx context.Context, project, hookID int64, endpoint string) error {
-	if hookID <= 0 {
-		return nil
+	matchedIDs := make(map[int64]struct{})
+	mismatchedKnownHook := false
+	if hookID > 0 {
+		var hook GongfengHook
+		_, err := c.request(ctx, "GET", fmt.Sprintf("/projects/%d/hooks/%d", project, hookID), nil, nil, &hook)
+		var apiErr *GongfengAPIError
+		if err != nil && !(errors.As(err, &apiErr) && apiErr.Status == 404) {
+			return err
+		}
+		if err == nil {
+			if hook.ID != hookID || hook.URL != endpoint {
+				mismatchedKnownHook = true
+			} else {
+				matchedIDs[hookID] = struct{}{}
+			}
+		}
 	}
-	var hook GongfengHook
-	_, err := c.request(ctx, "GET", fmt.Sprintf("/projects/%d/hooks/%d", project, hookID), nil, nil, &hook)
-	var apiErr *GongfengAPIError
-	if errors.As(err, &apiErr) && apiErr.Status == 404 {
-		return nil
+	// A manually configured hook has no persisted ID, and a fenced worker may
+	// have created a hook before it could save that ID. Enumerate every page
+	// before deleting so pagination cannot shift and hide later duplicates.
+	for page := 1; page > 0; {
+		if page > 100 {
+			return errors.New("Gongfeng webhook pagination exceeded the sync limit")
+		}
+		var hooks []GongfengHook
+		h, err := c.request(ctx, "GET", fmt.Sprintf("/projects/%d/hooks", project), gongfengPage(page), nil, &hooks)
+		if err != nil {
+			return err
+		}
+		if hooks == nil {
+			return errors.New("Gongfeng returned an invalid webhook list")
+		}
+		for _, hook := range hooks {
+			if hook.ID <= 0 || hook.URL != endpoint {
+				continue
+			}
+			matchedIDs[hook.ID] = struct{}{}
+		}
+		page, err = gongfengNextPage(h, page, len(hooks))
+		if err != nil {
+			return err
+		}
 	}
-	if err != nil {
-		return err
-	}
-	if hook.ID != hookID || hook.URL != endpoint {
+	if mismatchedKnownHook && len(matchedIDs) == 0 {
 		return errors.New("The Gongfeng webhook changed. Remove it in Gongfeng before disconnecting.")
 	}
-	_, err = c.request(ctx, "DELETE", fmt.Sprintf("/projects/%d/hooks/%d", project, hookID), nil, nil, nil)
-	return err
+	ids := make([]int64, 0, len(matchedIDs))
+	for id := range matchedIDs {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, id := range ids {
+		if _, err := c.request(ctx, "DELETE", fmt.Sprintf("/projects/%d/hooks/%d", project, id), nil, nil, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }

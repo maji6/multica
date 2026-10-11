@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS gongfeng_pull_request_project_key;

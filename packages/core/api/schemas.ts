@@ -402,7 +402,8 @@ export const GongfengRepositorySchema = z.object({
 export const GongfengRepositoriesResponseSchema = z.object({
   repositories: z.array(GongfengRepositorySchema),
   selected: z.array(GongfengRepositorySchema),
-  next_page: z.number().int().nonnegative().default(0),
+  next_page: z.number().int().nonnegative().nullable().default(null),
+  browse_error: z.string().nullable().default(null),
 }).loose();
 
 export const EMPTY_LIST_VCS_CONNECTIONS_RESPONSE: ListVCSConnectionsResponse = {

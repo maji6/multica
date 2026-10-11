@@ -839,7 +839,8 @@
     "contact_admin": "Ask a workspace admin to connect a Git provider instance.",
     "webhook_setup_title": "Finish setup in your provider",
     "webhook_setup_description": "Add a webhook on your repository or organisation with the URL and secret below. Forgejo/Gitea: choose the Gitea format and the Pull Request (and Commit Status) events. GitLab: paste the secret as the token and enable Merge request and Pipeline events.",
-    "gongfeng_webhook_setup_description": "Gongfeng のリポジトリ設定で Webhook を追加し、以下の URL とトークン欄にシークレットを入力して、Merge request イベントを有効にしてください。",
+    "gongfeng_webhook_rotated_title": "Webhook シークレットを再生成しました",
+    "gongfeng_webhook_rotated_description": "選択したリポジトリの Webhook は Multica が自動的に更新します。手動で追加した Webhook は、以下の新しいシークレットで更新してください。",
     "webhook_url_label": "Webhook URL",
     "webhook_secret_label": "Webhook secret",
     "webhook_secret_warning": "Copy the secret now. It is shown only once and cannot be retrieved later.",
@@ -863,6 +864,7 @@
     "regenerate_webhook": "Regenerate webhook",
     "rotate_confirm_title": "Regenerate webhook secret?",
     "rotate_confirm_description": "The current webhook secret will stop working immediately. Deliveries from your Git provider will fail until you update the webhook secret in provider settings.",
+    "gongfeng_rotate_confirm_description": "現在の Webhook シークレットは直ちに無効になります。選択したリポジトリの Webhook は Multica が自動更新します。手動で追加した Webhook は更新が必要です。",
     "rotate_confirm_cancel": "Cancel",
     "rotate_confirm_action": "Regenerate",
     "rotating": "Regenerating...",
@@ -887,7 +889,9 @@
     "gongfeng_retry": "再同期",
     "gongfeng_remove": "同期を停止",
     "gongfeng_archived": "アーカイブ済み",
-    "gongfeng_cleanup_warning": "接続を解除しました。残った Gongfeng Webhook は手動で削除してください。{{error}}"
+    "gongfeng_cleanup_warning": "接続を解除しました。残った Gongfeng Webhook は手動で削除してください。{{error}}",
+    "gongfeng_browse_failed": "Gongfeng リポジトリを参照できません。選択済みのリポジトリは引き続き管理できます。{{error}}",
+    "gongfeng_retry_browse": "参照を再試行"
   },
   "lark": {
     "section_title": "Lark",

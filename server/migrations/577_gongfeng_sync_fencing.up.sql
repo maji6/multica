@@ -1,0 +1,9 @@
+ALTER TABLE gongfeng_repository
+    ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    ADD COLUMN IF NOT EXISTS sync_lease_id UUID,
+    ADD COLUMN IF NOT EXISTS sync_lease_until TIMESTAMPTZ;
+
+ALTER TABLE vcs_pull_request
+    ADD COLUMN IF NOT EXISTS gongfeng_project_id BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS snapshot_lease_id UUID,
+    ADD COLUMN IF NOT EXISTS snapshot_lease_until TIMESTAMPTZ;

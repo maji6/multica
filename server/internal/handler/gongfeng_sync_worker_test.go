@@ -93,7 +93,14 @@ func TestGongfengImportPreservesKnownHeadAndResetsFailuresOnNewHead(t *testing.T
 	dbfx.Exec(t, "UPDATE vcs_pull_request SET snapshot_head_sha='A', snapshot_fetched_at=now(), snapshot=$2 WHERE id=$1", pr.ID, []byte(`{"total":1,"passed":1,"rollup":"success"}`))
 	markFailure := func(row db.VcsPullRequest) {
 		t.Helper()
-		if err := q.FailGongfengSnapshot(ctx, db.FailGongfengSnapshotParams{ID: row.ID, HeadSha: row.HeadSha, PrUpdatedAt: row.PrUpdatedAt, SnapshotError: "failed"}); err != nil {
+		claimed, err := q.ClaimGongfengSnapshot(ctx, db.ClaimGongfengSnapshotParams{ID: row.ID, WorkspaceID: row.WorkspaceID, ConnectionUpdatedAt: conn.UpdatedAt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := q.FailGongfengSnapshot(ctx, db.FailGongfengSnapshotParams{
+			ID: claimed.ID, HeadSha: claimed.HeadSha, PrUpdatedAt: claimed.PrUpdatedAt,
+			SnapshotError: "failed", SnapshotLeaseID: claimed.SnapshotLeaseID, UpdatedAt: conn.UpdatedAt,
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -149,7 +156,7 @@ func TestGongfengWorkerKeepsTrailingRefreshForTerminalHead(t *testing.T) {
 	}
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v3/projects/acme/widget":
+		case "/api/v3/projects/acme/widget", "/api/v3/projects/55":
 			projects.Add(1)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 55, "path_with_namespace": "acme/widget", "web_url": "https://git.code.tencent.com/acme/widget"})
 		case "/api/v3/projects/55/merge_requests":
@@ -175,6 +182,11 @@ func TestGongfengWorkerKeepsTrailingRefreshForTerminalHead(t *testing.T) {
 	}))
 	t.Cleanup(provider.Close)
 	conn, pr := seedGongfengSyncPR(t, provider.URL)
+	if _, err := testHandler.Queries.AddGongfengRepository(context.Background(), db.AddGongfengRepositoryParams{
+		ConnectionID: conn.ID, ProjectID: 55, Path: "acme/widget", WebUrl: "https://git.code.tencent.com/acme/widget",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	s := newGongfengSync(testHandler)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

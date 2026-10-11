@@ -787,21 +787,24 @@ type GithubPullRequestCheckSuite struct {
 }
 
 type GongfengRepository struct {
-	ConnectionID  pgtype.UUID        `json:"connection_id"`
-	ProjectID     int64              `json:"project_id"`
-	Path          string             `json:"path"`
-	WebUrl        string             `json:"web_url"`
-	CloneUrl      string             `json:"clone_url"`
-	Description   string             `json:"description"`
-	DefaultBranch string             `json:"default_branch"`
-	HookID        int64              `json:"hook_id"`
-	HookRevision  pgtype.Timestamptz `json:"hook_revision"`
-	NextPage      int32              `json:"next_page"`
-	ScanStartedAt pgtype.Timestamptz `json:"scan_started_at"`
-	SyncedAt      pgtype.Timestamptz `json:"synced_at"`
-	AttemptedAt   pgtype.Timestamptz `json:"attempted_at"`
-	SyncError     string             `json:"sync_error"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ConnectionID   pgtype.UUID        `json:"connection_id"`
+	ProjectID      int64              `json:"project_id"`
+	Path           string             `json:"path"`
+	WebUrl         string             `json:"web_url"`
+	CloneUrl       string             `json:"clone_url"`
+	Description    string             `json:"description"`
+	DefaultBranch  string             `json:"default_branch"`
+	HookID         int64              `json:"hook_id"`
+	HookRevision   pgtype.Timestamptz `json:"hook_revision"`
+	NextPage       int32              `json:"next_page"`
+	ScanStartedAt  pgtype.Timestamptz `json:"scan_started_at"`
+	SyncedAt       pgtype.Timestamptz `json:"synced_at"`
+	AttemptedAt    pgtype.Timestamptz `json:"attempted_at"`
+	SyncError      string             `json:"sync_error"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	Enabled        bool               `json:"enabled"`
+	SyncLeaseID    pgtype.UUID        `json:"sync_lease_id"`
+	SyncLeaseUntil pgtype.Timestamptz `json:"sync_lease_until"`
 }
 
 type InboxItem struct {
@@ -1700,6 +1703,9 @@ type VcsPullRequest struct {
 	Snapshot            []byte             `json:"snapshot"`
 	SnapshotError       string             `json:"snapshot_error"`
 	SnapshotAttemptedAt pgtype.Timestamptz `json:"snapshot_attempted_at"`
+	GongfengProjectID   int64              `json:"gongfeng_project_id"`
+	SnapshotLeaseID     pgtype.UUID        `json:"snapshot_lease_id"`
+	SnapshotLeaseUntil  pgtype.Timestamptz `json:"snapshot_lease_until"`
 }
 
 type VerificationCode struct {

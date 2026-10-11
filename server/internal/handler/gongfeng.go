@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -85,6 +86,155 @@ func gongfengProjectID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	return id, true
 }
 
+func splitGongfengProjectPath(path string) (string, string, bool) {
+	idx := strings.LastIndex(strings.Trim(path, "/"), "/")
+	if idx <= 0 || idx == len(strings.Trim(path, "/"))-1 {
+		return "", "", false
+	}
+	path = strings.Trim(path, "/")
+	return path[:idx], path[idx+1:], true
+}
+
+// reconcileGongfengIdentityTx makes the provider's immutable project ID the
+// local identity. Older rows used only the mutable namespace/path, so a rename
+// can leave two cards for the same merge request. Merge those rows before
+// moving the survivor to the current path.
+func reconcileGongfengIdentityTx(ctx context.Context, q *db.Queries, connectionID pgtype.UUID, projectID int64, oldPath, newPath, webURL string) error {
+	newOwner, newName, ok := splitGongfengProjectPath(newPath)
+	if !ok {
+		return errors.New("Gongfeng returned an invalid repository identity")
+	}
+	oldOwner, oldName, ok := splitGongfengProjectPath(oldPath)
+	if !ok {
+		oldOwner, oldName = newOwner, newName
+	}
+	prs, err := q.ListGongfengProjectPullRequests(ctx, db.ListGongfengProjectPullRequestsParams{
+		ConnectionID: connectionID,
+		ProjectID:    projectID,
+		OldOwner:     oldOwner,
+		OldName:      oldName,
+		NewOwner:     newOwner,
+		NewName:      newName,
+	})
+	if err != nil {
+		return err
+	}
+	byNumber := make(map[int32][]db.VcsPullRequest)
+	for _, pr := range prs {
+		byNumber[pr.PrNumber] = append(byNumber[pr.PrNumber], pr)
+	}
+	for _, duplicates := range byNumber {
+		// The query orders newest first. Keep the freshest payload while moving
+		// every link and explicit exclusion off legacy path-keyed duplicates.
+		target := duplicates[0]
+		for _, source := range duplicates[1:] {
+			if err := q.MergeGongfengPullRequestDuplicate(ctx, db.MergeGongfengPullRequestDuplicateParams{TargetID: target.ID, SourceID: source.ID}); err != nil {
+				return err
+			}
+		}
+		if err := q.UpdateGongfengPullRequestIdentity(ctx, db.UpdateGongfengPullRequestIdentityParams{
+			ID: target.ID, GongfengProjectID: projectID, RepoOwner: newOwner, RepoName: newName, WebUrl: webURL,
+		}); err != nil {
+			return err
+		}
+		if err := q.DeleteGongfengExcludedPullRequestLinks(ctx, target.ID); err != nil {
+			return err
+		}
+		if err := q.DeleteGongfengSupersededPullRequestExclusions(ctx, target.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *Handler) selectGongfengProject(ctx context.Context, conn db.VcsConnection, project vcs.GongfengProject) (db.GongfengRepository, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.GongfengRepository{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := h.Queries.WithTx(tx)
+	if _, err := q.LockVCSConnectionRevision(ctx, db.LockVCSConnectionRevisionParams{
+		ID: conn.ID, WorkspaceID: conn.WorkspaceID, Provider: conn.Provider, UpdatedAt: conn.UpdatedAt,
+	}); err != nil {
+		return db.GongfengRepository{}, err
+	}
+	oldPath := project.Path
+	if existing, lockErr := q.LockGongfengRepository(ctx, db.LockGongfengRepositoryParams{ConnectionID: conn.ID, ProjectID: project.ID}); lockErr == nil {
+		oldPath = existing.Path
+	} else if !errors.Is(lockErr, pgx.ErrNoRows) {
+		return db.GongfengRepository{}, lockErr
+	}
+	row, err := q.AddGongfengRepository(ctx, db.AddGongfengRepositoryParams{
+		ConnectionID: conn.ID, ProjectID: project.ID, Path: project.Path, WebUrl: project.WebURL,
+		CloneUrl: project.CloneURL(), Description: project.Description, DefaultBranch: project.DefaultBranch,
+	})
+	if err != nil {
+		return db.GongfengRepository{}, err
+	}
+	if err := reconcileGongfengIdentityTx(ctx, q, conn.ID, project.ID, oldPath, project.Path, project.WebURL); err != nil {
+		return db.GongfengRepository{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.GongfengRepository{}, err
+	}
+	return row, nil
+}
+
+// reconcileGongfengProject refreshes selected-repository metadata without
+// selecting a manually configured webhook. It returns false for an explicitly
+// stopped repository so late deliveries are acknowledged without mutation.
+func (h *Handler) reconcileGongfengProject(ctx context.Context, conn db.VcsConnection, project vcs.GongfengProject, fullMetadata bool) (db.GongfengRepository, bool, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.GongfengRepository{}, false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := h.Queries.WithTx(tx)
+	if _, lockErr := q.LockVCSConnectionRevision(ctx, db.LockVCSConnectionRevisionParams{
+		ID: conn.ID, WorkspaceID: conn.WorkspaceID, Provider: conn.Provider, UpdatedAt: conn.UpdatedAt,
+	}); errors.Is(lockErr, pgx.ErrNoRows) {
+		return db.GongfengRepository{}, false, nil
+	} else if lockErr != nil {
+		return db.GongfengRepository{}, false, lockErr
+	}
+	row, lockErr := q.LockGongfengRepository(ctx, db.LockGongfengRepositoryParams{ConnectionID: conn.ID, ProjectID: project.ID})
+	oldPath := project.Path
+	selected := lockErr == nil
+	if selected {
+		oldPath = row.Path
+		if !row.Enabled {
+			return row, false, nil
+		}
+	} else if !errors.Is(lockErr, pgx.ErrNoRows) {
+		return db.GongfengRepository{}, false, lockErr
+	}
+	if err := reconcileGongfengIdentityTx(ctx, q, conn.ID, project.ID, oldPath, project.Path, project.WebURL); err != nil {
+		return db.GongfengRepository{}, false, err
+	}
+	if selected {
+		metadataChanged := row.Path != project.Path || row.WebUrl != project.WebURL || row.CloneUrl != project.CloneURL() ||
+			row.Description != project.Description || row.DefaultBranch != project.DefaultBranch
+		if fullMetadata && metadataChanged {
+			row, err = q.UpdateGongfengRepositoryMetadata(ctx, db.UpdateGongfengRepositoryMetadataParams{
+				ConnectionID: conn.ID, ProjectID: project.ID, Path: project.Path, WebUrl: project.WebURL,
+				CloneUrl: project.CloneURL(), Description: project.Description, DefaultBranch: project.DefaultBranch,
+			})
+		} else if row.Path != project.Path || (project.WebURL != "" && row.WebUrl != project.WebURL) {
+			row, err = q.UpdateGongfengRepositoryIdentity(ctx, db.UpdateGongfengRepositoryIdentityParams{
+				ConnectionID: conn.ID, ProjectID: project.ID, Path: project.Path, WebUrl: project.WebURL,
+			})
+		}
+		if err != nil {
+			return db.GongfengRepository{}, false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.GongfengRepository{}, false, err
+	}
+	return row, true, nil
+}
+
 // Repository management is admin-only at the router, just like GitHub browsing.
 func (h *Handler) ListGongfengRepositories(w http.ResponseWriter, r *http.Request) {
 	conn, client, unlock, ok := h.loadGongfengConnection(w, r, false)
@@ -101,23 +251,26 @@ func (h *Handler) ListGongfengRepositories(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	projects, next, err := client.Projects(r.Context(), r.URL.Query().Get("search"), page)
-	if err != nil {
-		writeError(w, 502, err.Error())
-		return
-	}
 	rows, err := h.Queries.ListGongfengRepositories(r.Context(), db.ListGongfengRepositoriesParams{ConnectionID: conn.ID, WorkspaceID: conn.WorkspaceID})
 	if err != nil {
 		writeError(w, 500, "failed to list selected repositories")
 		return
 	}
-	repositories := make([]GongfengRepositoryResponse, 0, len(projects))
 	selected := make([]GongfengRepositoryResponse, 0, len(rows))
-	for _, p := range projects {
-		repositories = append(repositories, GongfengRepositoryResponse{ID: p.ID, Path: p.Path, WebURL: p.WebURL, CloneURL: p.CloneURL(), Description: p.Description, DefaultBranch: p.DefaultBranch, Archived: p.Archived})
-	}
 	for _, row := range rows {
 		selected = append(selected, gongfengRepositoryResponse(row))
+	}
+	projects, next, err := client.Projects(r.Context(), r.URL.Query().Get("search"), page)
+	if err != nil {
+		writeJSON(w, 200, map[string]any{
+			"repositories": []GongfengRepositoryResponse{}, "selected": selected, "next_page": nil,
+			"browse_error": "Gongfeng repository browsing is unavailable.",
+		})
+		return
+	}
+	repositories := make([]GongfengRepositoryResponse, 0, len(projects))
+	for _, p := range projects {
+		repositories = append(repositories, GongfengRepositoryResponse{ID: p.ID, Path: p.Path, WebURL: p.WebURL, CloneURL: p.CloneURL(), Description: p.Description, DefaultBranch: p.DefaultBranch, Archived: p.Archived})
 	}
 	writeJSON(w, 200, map[string]any{"repositories": repositories, "selected": selected, "next_page": next})
 }
@@ -140,7 +293,7 @@ func (h *Handler) AddGongfengRepository(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 400, "repository is archived or has a mismatched identity")
 		return
 	}
-	row, err := h.Queries.AddGongfengRepository(r.Context(), db.AddGongfengRepositoryParams{ConnectionID: conn.ID, ProjectID: project.ID, Path: project.Path, WebUrl: project.WebURL, CloneUrl: project.CloneURL(), Description: project.Description, DefaultBranch: project.DefaultBranch})
+	row, err := h.selectGongfengProject(r.Context(), conn, project)
 	if err != nil {
 		writeError(w, 500, "failed to save repository")
 		return
@@ -181,12 +334,13 @@ func (h *Handler) DeleteGongfengRepository(w http.ResponseWriter, r *http.Reques
 		writeError(w, 404, "selected repository not found")
 		return
 	}
-	if err = client.RemoveHook(r.Context(), id, row.HookID, h.vcsWebhookURL(uuidToString(conn.ID))); err != nil {
-		writeError(w, 502, err.Error())
+	row, err = h.Queries.DisableGongfengRepository(r.Context(), db.DisableGongfengRepositoryParams{ConnectionID: conn.ID, WorkspaceID: conn.WorkspaceID, ProjectID: id})
+	if err != nil {
+		writeError(w, 500, "failed to remove repository")
 		return
 	}
-	if err = h.Queries.DeleteGongfengRepository(r.Context(), db.DeleteGongfengRepositoryParams{ConnectionID: conn.ID, ProjectID: id}); err != nil {
-		writeError(w, 500, "failed to remove repository")
+	if err = client.RemoveHook(r.Context(), id, row.HookID, h.vcsWebhookURL(uuidToString(conn.ID))); err != nil {
+		writeJSON(w, 200, map[string]string{"webhook_cleanup_error": "Repository stopped, but its Gongfeng webhook could not be removed. Remove it manually in Gongfeng."})
 		return
 	}
 	w.WriteHeader(204)
@@ -208,11 +362,15 @@ func (h *Handler) resetGongfengHooks(ctx context.Context, conn db.VcsConnection)
 	return nil
 }
 func (h *Handler) removeGongfengHooks(ctx context.Context, conn db.VcsConnection) error {
-	client, err := h.gongfengClient(conn)
+	rows, err := h.Queries.ListAllGongfengRepositories(ctx, db.ListAllGongfengRepositoriesParams{ConnectionID: conn.ID, WorkspaceID: conn.WorkspaceID})
 	if err != nil {
 		return err
 	}
-	rows, err := h.Queries.ListGongfengRepositories(ctx, db.ListGongfengRepositoriesParams{ConnectionID: conn.ID, WorkspaceID: conn.WorkspaceID})
+	return h.removeGongfengHookRows(ctx, conn, rows)
+}
+
+func (h *Handler) removeGongfengHookRows(ctx context.Context, conn db.VcsConnection, rows []db.GongfengRepository) error {
+	client, err := h.gongfengClient(conn)
 	if err != nil {
 		return err
 	}
@@ -222,6 +380,34 @@ func (h *Handler) removeGongfengHooks(ctx context.Context, conn db.VcsConnection
 		}
 	}
 	return nil
+}
+
+// deleteGongfengConnectionLocally fences remote hook creation, captures every
+// selected project after older workers finish, and revokes local access in one
+// transaction. Remote cleanup deliberately follows the commit so an expired
+// provider token cannot keep the connection active in Multica.
+func (h *Handler) deleteGongfengConnectionLocally(ctx context.Context, connectionID, workspaceID pgtype.UUID) (db.VcsConnection, []db.GongfengRepository, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.VcsConnection{}, nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := h.Queries.WithTx(tx)
+	conn, err := q.LockVCSConnection(ctx, db.LockVCSConnectionParams{ID: connectionID, WorkspaceID: workspaceID})
+	if err != nil {
+		return db.VcsConnection{}, nil, err
+	}
+	rows, err := q.ListAllGongfengRepositories(ctx, db.ListAllGongfengRepositoriesParams{ConnectionID: connectionID, WorkspaceID: workspaceID})
+	if err != nil {
+		return db.VcsConnection{}, nil, err
+	}
+	if err := q.DeleteVCSConnection(ctx, db.DeleteVCSConnectionParams{ID: connectionID, WorkspaceID: workspaceID}); err != nil {
+		return db.VcsConnection{}, nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.VcsConnection{}, nil, err
+	}
+	return conn, rows, nil
 }
 
 // Keep workers and callbacks outside workspace teardown. Capture hook metadata
@@ -256,15 +442,13 @@ func (h *Handler) prepareGongfengWorkspaceDeletion(ctx context.Context, wsID pgt
 			unlock()
 			return nil, nil, err
 		}
-		rows, err := h.Queries.ListGongfengRepositories(ctx, db.ListGongfengRepositoriesParams{ConnectionID: conn.ID, WorkspaceID: wsID})
+		rows, err := h.Queries.ListAllGongfengRepositories(ctx, db.ListAllGongfengRepositoriesParams{ConnectionID: conn.ID, WorkspaceID: wsID})
 		if err != nil {
 			unlock()
 			return nil, nil, err
 		}
 		for _, row := range rows {
-			if row.HookID > 0 {
-				hooks = append(hooks, hookCleanup{conn, row})
-			}
+			hooks = append(hooks, hookCleanup{conn, row})
 		}
 	}
 	cleanup := func(ctx context.Context) {

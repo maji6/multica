@@ -59,9 +59,12 @@ const (
 type PullRequestEvent struct {
 	// Action is the raw provider action (e.g. "opened", "closed", "merge").
 	// The handler only needs to know whether it is terminal; see Terminal.
-	Action          string
-	RepoOwner       string
-	RepoName        string
+	Action    string
+	RepoOwner string
+	RepoName  string
+	// ProjectID is a provider-stable repository identity when one is available.
+	// Gongfeng uses it to survive namespace and repository renames.
+	ProjectID       int64
 	Number          int32
 	Title           string
 	Body            string

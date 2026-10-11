@@ -68,5 +68,6 @@ export interface GongfengRepository {
 export interface GongfengRepositoriesResponse {
   repositories: GongfengRepository[];
   selected: GongfengRepository[];
-  next_page: number;
+  next_page: number | null;
+  browse_error: string | null;
 }

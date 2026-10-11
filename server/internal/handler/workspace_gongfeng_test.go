@@ -53,6 +53,10 @@ func TestDeleteWorkspace_GongfengHookCleanup(t *testing.T) {
 	var connID string
 	deleted := make(chan bool, 1)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/projects/55/hooks" {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
 		if r.URL.Path != "/api/v3/projects/55/hooks/9" {
 			http.NotFound(w, r)
 			return

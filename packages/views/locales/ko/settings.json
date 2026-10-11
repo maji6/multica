@@ -839,7 +839,8 @@
     "contact_admin": "Ask a workspace admin to connect a Git provider instance.",
     "webhook_setup_title": "Finish setup in your provider",
     "webhook_setup_description": "Add a webhook on your repository or organisation with the URL and secret below. Forgejo/Gitea: choose the Gitea format and the Pull Request (and Commit Status) events. GitLab: paste the secret as the token and enable Merge request and Pipeline events.",
-    "gongfeng_webhook_setup_description": "Gongfeng 저장소 설정에서 아래 URL로 Webhook을 추가하고 시크릿을 토큰으로 입력한 다음 Merge request 이벤트를 활성화하세요.",
+    "gongfeng_webhook_rotated_title": "Webhook 시크릿을 재생성했습니다",
+    "gongfeng_webhook_rotated_description": "선택한 저장소의 Webhook은 Multica가 자동으로 업데이트합니다. 직접 추가한 Webhook은 아래의 새 시크릿으로 업데이트하세요.",
     "webhook_url_label": "Webhook URL",
     "webhook_secret_label": "Webhook secret",
     "webhook_secret_warning": "Copy the secret now. It is shown only once and cannot be retrieved later.",
@@ -863,6 +864,7 @@
     "regenerate_webhook": "Regenerate webhook",
     "rotate_confirm_title": "Regenerate webhook secret?",
     "rotate_confirm_description": "The current webhook secret will stop working immediately. Deliveries from your Git provider will fail until you update the webhook secret in provider settings.",
+    "gongfeng_rotate_confirm_description": "현재 Webhook 시크릿은 즉시 만료됩니다. 선택한 저장소의 Webhook은 Multica가 자동으로 업데이트합니다. 직접 추가한 Webhook은 따로 업데이트해야 합니다.",
     "rotate_confirm_cancel": "Cancel",
     "rotate_confirm_action": "Regenerate",
     "rotating": "Regenerating...",
@@ -887,7 +889,9 @@
     "gongfeng_retry": "다시 동기화",
     "gongfeng_remove": "동기화 중지",
     "gongfeng_archived": "보관됨",
-    "gongfeng_cleanup_warning": "연결이 해제되었습니다. 남은 Gongfeng Webhook을 수동으로 삭제하세요. {{error}}"
+    "gongfeng_cleanup_warning": "연결이 해제되었습니다. 남은 Gongfeng Webhook을 수동으로 삭제하세요. {{error}}",
+    "gongfeng_browse_failed": "Gongfeng 저장소를 탐색할 수 없습니다. 선택한 저장소는 계속 관리할 수 있습니다. {{error}}",
+    "gongfeng_retry_browse": "다시 탐색"
   },
   "telegram": {
     "section_title": "Telegram",

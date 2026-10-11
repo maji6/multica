@@ -155,6 +155,27 @@ describe("VCSConnectionRows", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("explains automatic Gongfeng hook updates after rotating the secret", async () => {
+    const gongfeng = { ...CONNECTION, provider: "gongfeng" as const, instance_url: "https://git.code.tencent.com" };
+    listing.current.connections = [gongfeng];
+    mockRotate.mockResolvedValue({ ...gongfeng, webhook_secret: "rotated-secret" });
+    const user = userEvent.setup();
+    renderWithI18n(<VCSConnectionRows />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for https://git.code.tencent.com" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Regenerate webhook" }));
+    const confirmation = await screen.findByRole("alertdialog", { name: "Regenerate webhook secret?" });
+    expect(within(confirmation).getByText(/update selected repository webhooks automatically/)).toBeVisible();
+    await user.click(within(confirmation).getByRole("button", { name: "Regenerate" }));
+
+    await waitFor(() => expect(mockRotate).toHaveBeenCalledWith("ws-1", "vcs-1"));
+    const result = await screen.findByRole("dialog", { name: "Webhook secret regenerated" });
+    expect(within(result).getByText(/updating webhooks for selected repositories automatically/)).toBeVisible();
+    expect(within(result).getByText(/manually/)).toBeVisible();
+    expect(within(result).getByDisplayValue("rotated-secret")).toBeVisible();
+    expect(within(result).queryByText(/add a webhook/i)).not.toBeInTheDocument();
+  });
+
   it("lists connected instances with their actions", async () => {
     listing.current.connections = [CONNECTION];
     const user = userEvent.setup();

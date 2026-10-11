@@ -38,17 +38,19 @@ type gongfengMRPayload struct {
 		AvatarURL string `json:"avatar_url"`
 	} `json:"user"`
 	ObjectAttributes struct {
-		IID            int32  `json:"iid"`
-		Title          string `json:"title"`
-		Description    string `json:"description"`
-		State          string `json:"state"`
-		Action         string `json:"action"`
-		SourceBranch   string `json:"source_branch"`
-		URL            string `json:"url"`
-		WorkInProgress bool   `json:"work_in_progress"`
-		CreatedAt      string `json:"created_at"`
-		UpdatedAt      string `json:"updated_at"`
-		Target         struct {
+		IID             int32  `json:"iid"`
+		TargetProjectID int64  `json:"target_project_id"`
+		Title           string `json:"title"`
+		Description     string `json:"description"`
+		State           string `json:"state"`
+		Action          string `json:"action"`
+		SourceBranch    string `json:"source_branch"`
+		URL             string `json:"url"`
+		WorkInProgress  bool   `json:"work_in_progress"`
+		CreatedAt       string `json:"created_at"`
+		UpdatedAt       string `json:"updated_at"`
+		Target          struct {
+			ID     int64  `json:"id"`
 			WebURL string `json:"web_url"`
 		} `json:"target"`
 		LastCommit struct {
@@ -98,9 +100,14 @@ func (gongfengProvider) ParsePullRequest(body []byte) (PullRequestEvent, error) 
 	default:
 		return PullRequestEvent{}, fmt.Errorf("gongfeng: unknown MR state %q", a.State)
 	}
+	projectID := a.Target.ID
+	if projectID <= 0 {
+		projectID = a.TargetProjectID
+	}
 	pr := PullRequestEvent{
 		Action: a.Action, RepoOwner: owner, RepoName: name, Number: a.IID,
-		Title: a.Title, Body: a.Description, State: state, HTMLURL: a.URL,
+		ProjectID: projectID,
+		Title:     a.Title, Body: a.Description, State: state, HTMLURL: a.URL,
 		Branch: a.SourceBranch, HeadSHA: a.LastCommit.ID,
 		CreatedAt: createdAt, UpdatedAt: updatedAt,
 	}

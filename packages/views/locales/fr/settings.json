@@ -843,7 +843,8 @@
     "contact_admin": "Demandez à un administrateur de l'espace de travail de connecter une instance de fournisseur git.",
     "webhook_setup_title": "Terminez la configuration chez votre fournisseur",
     "webhook_setup_description": "Ajoutez un webhook sur votre dépôt ou votre organisation avec l'URL et le secret ci-dessous. Forgejo/Gitea : choisissez le format Gitea et les événements Pull Request (et Commit Status). GitLab : collez le secret comme jeton et activez les événements Merge request et Pipeline.",
-    "gongfeng_webhook_setup_description": "Dans les paramètres du dépôt Gongfeng, ajoutez un webhook avec l’URL ci-dessous, utilisez le secret comme jeton et activez les événements Merge request.",
+    "gongfeng_webhook_rotated_title": "Secret du webhook régénéré",
+    "gongfeng_webhook_rotated_description": "Multica met automatiquement à jour les webhooks des dépôts sélectionnés. Mettez à jour les webhooks ajoutés manuellement avec le nouveau secret ci-dessous.",
     "webhook_url_label": "URL du webhook",
     "webhook_secret_label": "Secret du webhook",
     "webhook_secret_warning": "Copiez le secret maintenant. Il n'est affiché qu'une seule fois et ne pourra pas être récupéré ensuite.",
@@ -867,6 +868,7 @@
     "regenerate_webhook": "Régénérer le webhook",
     "rotate_confirm_title": "Régénérer le secret du webhook ?",
     "rotate_confirm_description": "Le secret actuel du webhook cessera de fonctionner immédiatement. Les livraisons de votre fournisseur git échoueront tant que vous n'aurez pas mis à jour le secret dans ses paramètres.",
+    "gongfeng_rotate_confirm_description": "Le secret actuel du webhook cessera de fonctionner immédiatement. Multica mettra automatiquement à jour les webhooks des dépôts sélectionnés. Vous devez mettre à jour les webhooks ajoutés manuellement.",
     "rotate_confirm_cancel": "Annuler",
     "rotate_confirm_action": "Régénérer",
     "rotating": "Régénération...",
@@ -891,7 +893,9 @@
     "gongfeng_retry": "Relancer la synchronisation",
     "gongfeng_remove": "Arrêter la synchronisation",
     "gongfeng_archived": "Archivé",
-    "gongfeng_cleanup_warning": "Connexion supprimée. Retirez manuellement les webhooks Gongfeng restants. {{error}}"
+    "gongfeng_cleanup_warning": "Connexion supprimée. Retirez manuellement les webhooks Gongfeng restants. {{error}}",
+    "gongfeng_browse_failed": "Impossible de parcourir les dépôts Gongfeng. Les dépôts sélectionnés restent disponibles. {{error}}",
+    "gongfeng_retry_browse": "Réessayer"
   },
   "lark": {
     "section_title": "Lark",

@@ -83,7 +83,7 @@ export function VCSConnectionRows() {
   const [connecting, setConnecting] = useState(false);
   const [webhook, setWebhook] = useState<(VCSConnection & { webhook_secret?: string }) | null>(null);
   const webhookSecret = webhook?.webhook_secret;
-  const [rotateTarget, setRotateTarget] = useState<string | null>(null);
+  const [rotateTarget, setRotateTarget] = useState<VCSConnection | null>(null);
   const [rotating, setRotating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -115,7 +115,7 @@ export function VCSConnectionRows() {
     if (!rotateTarget || rotating) return;
     setRotating(true);
     try {
-      const resp = await api.rotateVCSWebhook(wsId, rotateTarget);
+      const resp = await api.rotateVCSWebhook(wsId, rotateTarget.id);
       await qc.invalidateQueries({ queryKey: ["vcs", wsId] });
       setRotateTarget(null);
       setWebhook(resp);
@@ -209,7 +209,7 @@ export function VCSConnectionRows() {
                   <Webhook />
                   {t(($) => $.vcs.view_webhook)}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setRotateTarget(c.id)}>
+                <DropdownMenuItem onClick={() => setRotateTarget(c)}>
                   <RefreshCw />
                   {t(($) => $.vcs.regenerate_webhook)}
                 </DropdownMenuItem>
@@ -359,10 +359,10 @@ export function VCSConnectionRows() {
       >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{webhookSecret ? t(($) => $.vcs.webhook_setup_title) : t(($) => $.vcs.webhook_view_title)}</DialogTitle>
+            <DialogTitle>{webhookSecret && webhook?.provider === "gongfeng" ? t(($) => $.vcs.gongfeng_webhook_rotated_title) : webhookSecret ? t(($) => $.vcs.webhook_setup_title) : t(($) => $.vcs.webhook_view_title)}</DialogTitle>
             <DialogDescription>
               {webhookSecret
-                ? webhook?.provider === "gongfeng" ? t(($) => $.vcs.gongfeng_webhook_setup_description) : t(($) => $.vcs.webhook_setup_description)
+                ? webhook?.provider === "gongfeng" ? t(($) => $.vcs.gongfeng_webhook_rotated_description) : t(($) => $.vcs.webhook_setup_description)
                 : webhook?.provider === "gongfeng" ? t(($) => $.vcs.gongfeng_webhook_view_description) : t(($) => $.vcs.webhook_view_description)}
             </DialogDescription>
           </DialogHeader>
@@ -408,7 +408,9 @@ export function VCSConnectionRows() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t(($) => $.vcs.rotate_confirm_title)}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t(($) => $.vcs.rotate_confirm_description)}
+              {rotateTarget?.provider === "gongfeng"
+                ? t(($) => $.vcs.gongfeng_rotate_confirm_description)
+                : t(($) => $.vcs.rotate_confirm_description)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

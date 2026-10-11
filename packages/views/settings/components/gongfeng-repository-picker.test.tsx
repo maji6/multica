@@ -4,17 +4,18 @@ import userEvent from "@testing-library/user-event";
 import { renderWithI18n } from "../../test/i18n";
 import type { GongfengRepository, VCSConnection } from "@multica/core/types";
 
-const mocks = vi.hoisted(() => ({ enable: vi.fn(), disable: vi.fn(), invalidate: vi.fn(), toast: vi.fn(), refetch: vi.fn(), fetchNext: vi.fn(), query: {} as Record<string, unknown> }));
+const mocks = vi.hoisted(() => ({ enable: vi.fn(), disable: vi.fn(), invalidate: vi.fn(), toastError: vi.fn(), toastWarning: vi.fn(), refetch: vi.fn(), fetchNext: vi.fn(), query: {} as Record<string, unknown> }));
 vi.mock("@tanstack/react-query", () => ({ useInfiniteQuery: () => mocks.query, useQueryClient: () => ({ invalidateQueries: mocks.invalidate }), queryOptions: <T,>(value: T) => value }));
 vi.mock("@multica/core/api", () => ({ api: { enableGongfengRepository: mocks.enable, disableGongfengRepository: mocks.disable } }));
-vi.mock("sonner", () => ({ toast: { error: mocks.toast } }));
+vi.mock("sonner", () => ({ toast: { error: mocks.toastError, warning: mocks.toastWarning } }));
 import { GongfengRepositoryPicker } from "./gongfeng-repository-picker";
 
 const connection: VCSConnection = { id: "conn", workspace_id: "ws", provider: "gongfeng", instance_url: "https://git.code.tencent.com", account_login: "alice", webhook_url: "https://multica.example/hook", webhook_path: "/hook", created_at: "" };
 const repo: GongfengRepository = { id: 55, path: "acme/widget", web_url: "https://git.code.tencent.com/acme/widget", clone_url: "git@git.code.tencent.com:acme/widget.git", description: "", default_branch: "main", archived: false, syncing: false, sync_error: "", synced_at: null, webhook_configured: false };
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.query = { data: { pages: [{ repositories: [repo, { ...repo, id: 56, path: "acme/archived", archived: true }], selected: [] }] }, isPending: false, error: null, hasNextPage: true, refetch: mocks.refetch, fetchNextPage: mocks.fetchNext };
+  mocks.disable.mockResolvedValue({ webhook_cleanup_error: "" });
+  mocks.query = { data: { pages: [{ repositories: [repo, { ...repo, id: 56, path: "acme/archived", archived: true }], selected: [], next_page: 2, browse_error: null }] }, isPending: false, error: null, hasNextPage: true, refetch: mocks.refetch, fetchNextPage: mocks.fetchNext };
 });
 it("enables the selected repository and keeps archived repositories disabled", async () => {
   const user = userEvent.setup();
@@ -44,7 +45,7 @@ it("preserves selections when saving fails and offers retry for a failed sync", 
   renderWithI18n(<GongfengRepositoryPicker wsId="ws" connection={connection} onClose={onClose} />);
   await user.click(screen.getByRole("checkbox", { name: "acme/widget" }));
   await user.click(screen.getByRole("button", { name: "Enable sync" }));
-  await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("Permission denied"));
+  await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith("Permission denied"));
   expect(screen.getByRole("checkbox", { name: "acme/widget" })).toBeChecked(); expect(onClose).not.toHaveBeenCalled();
 });
 it("exposes failed repository sync and its retry action", async () => {
@@ -55,4 +56,34 @@ it("exposes failed repository sync and its retry action", async () => {
   expect(screen.getByText("Webhook not configured")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Retry sync: acme/widget" }));
   await waitFor(() => expect(mocks.enable).toHaveBeenCalledWith("ws", "conn", 55, true));
+});
+
+it("keeps selected repositories manageable when remote browsing fails", async () => {
+  mocks.query.data = { pages: [{ repositories: [], selected: [{ ...repo, webhook_configured: true }], next_page: null, browse_error: "Gongfeng is unavailable" }] };
+  mocks.query.hasNextPage = false;
+  const user = userEvent.setup();
+  renderWithI18n(<GongfengRepositoryPicker wsId="ws" connection={connection} onClose={vi.fn()} />);
+
+  expect(screen.getByText("acme/widget")).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent("Gongfeng is unavailable");
+  expect(screen.queryByText("No repositories found")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Retry browsing" }));
+  expect(mocks.refetch).toHaveBeenCalledOnce();
+
+  await user.click(screen.getByRole("button", { name: "Stop syncing: acme/widget" }));
+  await waitFor(() => expect(mocks.disable).toHaveBeenCalledWith("ws", "conn", 55));
+});
+
+it("warns when local sync stops but the remote webhook remains", async () => {
+  const warning = "Repository stopped, but its Gongfeng webhook could not be removed. Remove it manually in Gongfeng.";
+  mocks.disable.mockResolvedValue({ webhook_cleanup_error: warning });
+  mocks.query.data = { pages: [{ repositories: [], selected: [repo], next_page: null, browse_error: null }] };
+  const user = userEvent.setup();
+  renderWithI18n(<GongfengRepositoryPicker wsId="ws" connection={connection} onClose={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "Stop syncing: acme/widget" }));
+  await waitFor(() => expect(mocks.toastWarning).toHaveBeenCalledWith(warning));
+  expect(mocks.toastError).not.toHaveBeenCalled();
+  expect(mocks.invalidate).toHaveBeenCalled();
 });

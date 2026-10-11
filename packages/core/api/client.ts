@@ -4937,8 +4937,14 @@ export class ApiClient {
     return result;
   }
 
-  async disableGongfengRepository(workspaceId: string, connectionId: string, projectId: number): Promise<void> {
-    await this.fetch(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/repositories/${projectId}`, { method: "DELETE" });
+  async disableGongfengRepository(workspaceId: string, connectionId: string, projectId: number): Promise<{ webhook_cleanup_error: string }> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/repositories/${projectId}`, { method: "DELETE" });
+    // Older backends return 204 after stopping local sync.
+    const result = parseWithFallback<{ webhook_cleanup_error: string } | null>(raw ?? {}, VCSDisconnectResponseSchema, null, {
+      endpoint: "DELETE /api/workspaces/:id/vcs/connections/:connectionId/repositories/:projectId",
+    });
+    if (!result) throw new Error("Invalid stop response. Reload repositories to check sync status.");
+    return result;
   }
 
   // Lark integration

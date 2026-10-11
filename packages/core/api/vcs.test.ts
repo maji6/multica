@@ -57,7 +57,7 @@ describe("VCS API response compatibility", () => {
     const repo = { id: 55, path: "acme/team/widget", web_url: "https://git.code.tencent.com/acme/team/widget" };
     respond({ repositories: [repo], selected: [{ ...repo, sync_error: "Permission denied", syncing: true }], next_page: 2 });
     const result = await client.listGongfengRepositories("ws-1", "vcs-1", 1, "team/widget");
-    expect(result.next_page).toBe(2);
+    expect(result).toMatchObject({ next_page: 2, browse_error: null });
     expect(result.repositories[0]).toMatchObject({ archived: false, webhook_configured: false, synced_at: null });
     expect(result.selected[0]?.sync_error).toBe("Permission denied");
     expect(vi.mocked(fetch).mock.calls[0]?.[0]).toContain("search=team%2Fwidget");
@@ -66,8 +66,21 @@ describe("VCS API response compatibility", () => {
     respond({ ...repo, syncing: true });
     await expect(client.enableGongfengRepository("ws-1", "vcs-1", 55, true)).resolves.toMatchObject({ id: 55, syncing: true });
     expect(vi.mocked(fetch).mock.calls[0]?.[0]).toContain("/55/sync");
+    respond({ repositories: [repo], selected: [] });
+    await expect(client.listGongfengRepositories("ws-1", "vcs-1")).resolves.toMatchObject({ next_page: null, browse_error: null });
     respond({ ...repo, id: "invalid" });
     await expect(client.enableGongfengRepository("ws-1", "vcs-1", 55)).rejects.toThrow(/Reload repositories/);
+  });
+
+  it("retains selected repositories when Gongfeng browsing fails", async () => {
+    const repo = { id: 55, path: "acme/team/widget", web_url: "https://git.code.tencent.com/acme/team/widget" };
+    respond({ repositories: [], selected: [repo], next_page: null, browse_error: "Gongfeng is unavailable" });
+    await expect(client.listGongfengRepositories("ws-1", "vcs-1")).resolves.toMatchObject({
+      repositories: [],
+      selected: [{ id: 55, path: "acme/team/widget" }],
+      next_page: null,
+      browse_error: "Gongfeng is unavailable",
+    });
   });
 
   it("preserves 204 disconnect compatibility and reports remote cleanup failures", async () => {
@@ -77,6 +90,11 @@ describe("VCS API response compatibility", () => {
     await expect(client.deleteVCSConnection("ws-1", "vcs-1")).resolves.toEqual({ webhook_cleanup_error: "Permission denied" });
     respond({ webhook_cleanup_error: 42 });
     await expect(client.deleteVCSConnection("ws-1", "vcs-1")).rejects.toThrow(/Invalid disconnect response/);
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+    await expect(client.disableGongfengRepository("ws-1", "vcs-1", 55)).resolves.toEqual({ webhook_cleanup_error: "" });
+    respond({ webhook_cleanup_error: "Permission denied" });
+    await expect(client.disableGongfengRepository("ws-1", "vcs-1", 55)).resolves.toEqual({ webhook_cleanup_error: "Permission denied" });
   });
 
 });

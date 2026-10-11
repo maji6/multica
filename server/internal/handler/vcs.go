@@ -312,17 +312,28 @@ func (h *Handler) DeleteVCSConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cleanupError := ""
+	deletedLocally := false
 	if err == nil && conn.WorkspaceID == wsUUID && conn.Provider == "gongfeng" {
-		if err := h.removeGongfengHooks(r.Context(), conn); err != nil {
-			cleanupError = err.Error()
+		var rows []db.GongfengRepository
+		conn, rows, err = h.deleteGongfengConnectionLocally(r.Context(), idUUID, wsUUID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			deletedLocally = true
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to remove connection")
+			return
+		} else if err := h.removeGongfengHookRows(r.Context(), conn, rows); err != nil {
+			cleanupError = "Connection removed, but its Gongfeng webhooks could not be removed. Remove them manually in Gongfeng."
 		}
+		deletedLocally = true
 	}
-	if err := h.Queries.DeleteVCSConnection(r.Context(), db.DeleteVCSConnectionParams{
-		ID:          idUUID,
-		WorkspaceID: wsUUID,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to remove connection")
-		return
+	if !deletedLocally {
+		if err := h.Queries.DeleteVCSConnection(r.Context(), db.DeleteVCSConnectionParams{
+			ID:          idUUID,
+			WorkspaceID: wsUUID,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to remove connection")
+			return
+		}
 	}
 	h.publish(protocol.EventVCSConnectionDeleted, workspaceID, "system", "", map[string]any{
 		"id": chi.URLParam(r, "connectionId"),

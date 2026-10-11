@@ -144,6 +144,40 @@ func TestGongfengAPI_HookRetryPreservesEventsAndDoesNotDuplicate(t *testing.T) {
 		t.Fatalf("hook %d, err %v, posted %d", id, err, posted)
 	}
 }
+
+func TestGongfengAPI_RemoveHookCollectsAllPagesBeforeDeleting(t *testing.T) {
+	const endpoint = "https://multica.example/api/webhooks/vcs/connection"
+	deleted := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/projects/55/hooks" && r.URL.Query().Get("page") == "1":
+			w.Header().Set("X-Next-Page", "2")
+			hooks := make([]GongfengHook, 100)
+			for i := range hooks {
+				hooks[i] = GongfengHook{ID: int64(i + 1), URL: "https://other.example/hook"}
+			}
+			hooks[0].URL = endpoint
+			_ = json.NewEncoder(w).Encode(hooks)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/projects/55/hooks" && r.URL.Query().Get("page") == "2":
+			_ = json.NewEncoder(w).Encode([]GongfengHook{{ID: 101, URL: endpoint}})
+		case r.Method == http.MethodDelete && (r.URL.Path == "/api/v3/projects/55/hooks/1" || r.URL.Path == "/api/v3/projects/55/hooks/101"):
+			deleted = append(deleted, r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client, _ := NewGongfengClient(server.URL, "test-token")
+	if err := client.RemoveHook(context.Background(), 55, 0, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(deleted, ",") != "/api/v3/projects/55/hooks/1,/api/v3/projects/55/hooks/101" {
+		t.Fatalf("deleted hooks %v", deleted)
+	}
+}
+
 func TestGongfengAPI_ErrorsNeverEchoCredentialsOrFollowRedirects(t *testing.T) {
 	for _, code := range []int{302, 401, 403, 429, 500} {
 		t.Run(http.StatusText(code), func(t *testing.T) {

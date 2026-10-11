@@ -11,6 +11,11 @@ ORDER BY created_at ASC;
 SELECT * FROM vcs_connection
 WHERE id = $1;
 
+-- name: LockVCSConnection :one
+SELECT * FROM vcs_connection
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;
+
 -- name: UpsertVCSConnection :one
 -- Reconnecting the same instance rotates the stored token/secret, provider,
 -- and identity in place rather than creating a duplicate row.
@@ -36,11 +41,19 @@ RETURNING *;
 -- atomically with the connection row. The target CTE also scopes every child
 -- delete to a connection that actually belongs to the workspace, so a wrong
 -- workspace_id is a no-op rather than deleting another tenant's child rows.
-WITH target AS (
+WITH target AS MATERIALIZED (
     SELECT vcs_connection.id FROM vcs_connection WHERE vcs_connection.id = $1 AND vcs_connection.workspace_id = $2
+    FOR UPDATE
 ),
 cleared_links AS (
     DELETE FROM issue_vcs_pull_request
+    WHERE pull_request_id IN (
+        SELECT vcs_pull_request.id FROM vcs_pull_request
+        WHERE vcs_pull_request.connection_id IN (SELECT target.id FROM target)
+    )
+),
+cleared_exclusions AS (
+    DELETE FROM issue_pull_request_exclusion
     WHERE pull_request_id IN (
         SELECT vcs_pull_request.id FROM vcs_pull_request
         WHERE vcs_pull_request.connection_id IN (SELECT target.id FROM target)
@@ -55,7 +68,7 @@ cleared_repositories AS (
 cleared_prs AS (
     DELETE FROM vcs_pull_request WHERE connection_id IN (SELECT target.id FROM target)
 )
-DELETE FROM vcs_connection WHERE vcs_connection.id = $1 AND vcs_connection.workspace_id = $2;
+DELETE FROM vcs_connection WHERE vcs_connection.id IN (SELECT target.id FROM target);
 
 -- name: RotateVCSConnectionWebhookSecret :one
 UPDATE vcs_connection
@@ -68,6 +81,11 @@ RETURNING *;
 -- VCS Pull Request
 -- =====================
 
+-- name: LockVCSConnectionRevision :one
+SELECT * FROM vcs_connection
+WHERE id = $1 AND workspace_id = $2 AND provider = $3 AND updated_at = $4
+FOR UPDATE;
+
 -- name: UpsertVCSPullRequest :one
 -- pr_updated_at guards against an out-of-order webhook redelivery regressing
 -- the PR state, mirroring the updated_at guard on UpsertVCSCommitStatus. Each
@@ -75,17 +93,38 @@ RETURNING *;
 -- the stored row; a stale event keeps the existing values. The row is still
 -- touched (and thus RETURNED) either way, so callers always get the current PR
 -- — the webhook needs pr.id to link the issue even on a stale redelivery.
+WITH live_connection AS MATERIALIZED (
+    SELECT id FROM vcs_connection
+    WHERE id = sqlc.arg('connection_id')::uuid
+      AND workspace_id = sqlc.arg('workspace_id')::uuid
+      AND provider = sqlc.arg('provider')::text
+      AND (sqlc.arg('provider')::text <> 'gongfeng' OR (
+        updated_at = sqlc.arg('connection_updated_at')::timestamptz
+        AND NOT EXISTS (
+          SELECT 1 FROM gongfeng_repository gr
+          WHERE gr.connection_id = vcs_connection.id AND NOT gr.enabled
+            AND ((sqlc.arg('gongfeng_project_id')::bigint > 0 AND gr.project_id = sqlc.arg('gongfeng_project_id')::bigint)
+              OR (sqlc.arg('gongfeng_project_id')::bigint = 0 AND gr.path = sqlc.arg('repo_owner')::text || '/' || sqlc.arg('repo_name')::text))
+        )
+      ))
+    FOR UPDATE
+)
 INSERT INTO vcs_pull_request (
     workspace_id, connection_id, provider, repo_owner, repo_name, pr_number,
     title, state, html_url, branch, author_login, author_avatar_url,
     merged_at, closed_at, pr_created_at, pr_updated_at,
-    additions, deletions, changed_files, head_sha
-) VALUES (
-    $1, $2, $3, $4, $5, $6,
-    $7, $8, $9, sqlc.narg('branch'), sqlc.narg('author_login'), sqlc.narg('author_avatar_url'),
-    sqlc.narg('merged_at'), sqlc.narg('closed_at'), $10, $11,
-    $12, $13, $14, $15
+    additions, deletions, changed_files, head_sha, gongfeng_project_id
 )
+SELECT
+    sqlc.arg('workspace_id')::uuid, sqlc.arg('connection_id')::uuid, sqlc.arg('provider')::text,
+    sqlc.arg('repo_owner')::text, sqlc.arg('repo_name')::text, sqlc.arg('pr_number')::integer,
+    sqlc.arg('title')::text, sqlc.arg('state')::text, sqlc.arg('html_url')::text,
+    sqlc.narg('branch'), sqlc.narg('author_login'), sqlc.narg('author_avatar_url'),
+    sqlc.narg('merged_at'), sqlc.narg('closed_at'), sqlc.arg('pr_created_at')::timestamptz,
+    sqlc.arg('pr_updated_at')::timestamptz, sqlc.arg('additions')::integer,
+    sqlc.arg('deletions')::integer, sqlc.arg('changed_files')::integer,
+    sqlc.arg('head_sha')::text, sqlc.arg('gongfeng_project_id')::bigint
+FROM live_connection
 ON CONFLICT (connection_id, repo_owner, repo_name, pr_number) DO UPDATE SET
     workspace_id      = CASE WHEN EXCLUDED.pr_updated_at >= vcs_pull_request.pr_updated_at THEN EXCLUDED.workspace_id      ELSE vcs_pull_request.workspace_id      END,
     provider          = CASE WHEN EXCLUDED.pr_updated_at >= vcs_pull_request.pr_updated_at THEN EXCLUDED.provider          ELSE vcs_pull_request.provider          END,
@@ -120,6 +159,12 @@ ON CONFLICT (connection_id, repo_owner, repo_name, pr_number) DO UPDATE SET
         AND (EXCLUDED.head_sha <> '' OR EXCLUDED.pr_updated_at > vcs_pull_request.pr_updated_at
             OR EXCLUDED.branch IS DISTINCT FROM vcs_pull_request.branch)
         THEN '' ELSE vcs_pull_request.snapshot_error END,
+    gongfeng_project_id = CASE WHEN EXCLUDED.pr_updated_at >= vcs_pull_request.pr_updated_at
+        AND EXCLUDED.gongfeng_project_id > 0 THEN EXCLUDED.gongfeng_project_id ELSE vcs_pull_request.gongfeng_project_id END,
+    snapshot_lease_id = CASE WHEN EXCLUDED.pr_updated_at >= vcs_pull_request.pr_updated_at
+        AND EXCLUDED.head_sha <> vcs_pull_request.head_sha THEN NULL ELSE vcs_pull_request.snapshot_lease_id END,
+    snapshot_lease_until = CASE WHEN EXCLUDED.pr_updated_at >= vcs_pull_request.pr_updated_at
+        AND EXCLUDED.head_sha <> vcs_pull_request.head_sha THEN NULL ELSE vcs_pull_request.snapshot_lease_until END,
     updated_at        = now()
 RETURNING *;
 
@@ -207,7 +252,8 @@ INSERT INTO issue_vcs_pull_request (
 )
 ON CONFLICT (issue_id, pull_request_id) DO UPDATE SET
     linked_by_type = 'member',
-    linked_by_id = EXCLUDED.linked_by_id
+    linked_by_id = EXCLUDED.linked_by_id,
+    linked_at = now()
 WHERE issue_vcs_pull_request.linked_by_type IS DISTINCT FROM 'member';
 
 -- name: ListIssueIDsForVCSPullRequest :many

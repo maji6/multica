@@ -16,8 +16,18 @@ INSERT INTO gongfeng_repository (connection_id, project_id, path, web_url, clone
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (connection_id, project_id) DO UPDATE SET
     path = EXCLUDED.path, web_url = EXCLUDED.web_url, clone_url = EXCLUDED.clone_url,
-    description = EXCLUDED.description, default_branch = EXCLUDED.default_branch
-RETURNING connection_id, project_id, path, web_url, clone_url, description, default_branch, hook_id, hook_revision, next_page, scan_started_at, synced_at, attempted_at, sync_error, updated_at
+    description = EXCLUDED.description, default_branch = EXCLUDED.default_branch,
+    enabled = TRUE,
+    next_page = CASE WHEN gongfeng_repository.enabled THEN gongfeng_repository.next_page ELSE 1 END,
+    scan_started_at = CASE WHEN gongfeng_repository.enabled THEN gongfeng_repository.scan_started_at ELSE NULL END,
+    synced_at = CASE WHEN gongfeng_repository.enabled THEN gongfeng_repository.synced_at ELSE NULL END,
+    attempted_at = CASE WHEN gongfeng_repository.enabled THEN gongfeng_repository.attempted_at ELSE NULL END,
+    hook_revision = CASE WHEN gongfeng_repository.enabled THEN gongfeng_repository.hook_revision ELSE NULL END,
+    sync_error = CASE WHEN gongfeng_repository.enabled THEN gongfeng_repository.sync_error ELSE '' END,
+    sync_lease_id = CASE WHEN gongfeng_repository.enabled THEN gongfeng_repository.sync_lease_id ELSE NULL END,
+    sync_lease_until = CASE WHEN gongfeng_repository.enabled THEN gongfeng_repository.sync_lease_until ELSE NULL END,
+    updated_at = now()
+RETURNING connection_id, project_id, path, web_url, clone_url, description, default_branch, hook_id, hook_revision, next_page, scan_started_at, synced_at, attempted_at, sync_error, updated_at, enabled, sync_lease_id, sync_lease_until
 `
 
 type AddGongfengRepositoryParams struct {
@@ -57,23 +67,29 @@ func (q *Queries) AddGongfengRepository(ctx context.Context, arg AddGongfengRepo
 		&i.AttemptedAt,
 		&i.SyncError,
 		&i.UpdatedAt,
+		&i.Enabled,
+		&i.SyncLeaseID,
+		&i.SyncLeaseUntil,
 	)
 	return i, err
 }
 
-const beginGongfengRepositorySync = `-- name: BeginGongfengRepositorySync :one
-UPDATE gongfeng_repository SET attempted_at = now(), scan_started_at = COALESCE(scan_started_at, now())
-WHERE connection_id = $1 AND project_id = $2 AND updated_at = $3 RETURNING connection_id, project_id, path, web_url, clone_url, description, default_branch, hook_id, hook_revision, next_page, scan_started_at, synced_at, attempted_at, sync_error, updated_at
+const claimGongfengRepositorySync = `-- name: ClaimGongfengRepositorySync :one
+UPDATE gongfeng_repository SET attempted_at = now(), scan_started_at = COALESCE(scan_started_at, now()),
+    sync_lease_id = gen_random_uuid(), sync_lease_until = now() + interval '2 minutes'
+WHERE connection_id = $1 AND project_id = $2 AND updated_at = $3 AND enabled
+    AND (sync_lease_until IS NULL OR sync_lease_until < now())
+RETURNING connection_id, project_id, path, web_url, clone_url, description, default_branch, hook_id, hook_revision, next_page, scan_started_at, synced_at, attempted_at, sync_error, updated_at, enabled, sync_lease_id, sync_lease_until
 `
 
-type BeginGongfengRepositorySyncParams struct {
+type ClaimGongfengRepositorySyncParams struct {
 	ConnectionID pgtype.UUID        `json:"connection_id"`
 	ProjectID    int64              `json:"project_id"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
-func (q *Queries) BeginGongfengRepositorySync(ctx context.Context, arg BeginGongfengRepositorySyncParams) (GongfengRepository, error) {
-	row := q.db.QueryRow(ctx, beginGongfengRepositorySync, arg.ConnectionID, arg.ProjectID, arg.UpdatedAt)
+func (q *Queries) ClaimGongfengRepositorySync(ctx context.Context, arg ClaimGongfengRepositorySyncParams) (GongfengRepository, error) {
+	row := q.db.QueryRow(ctx, claimGongfengRepositorySync, arg.ConnectionID, arg.ProjectID, arg.UpdatedAt)
 	var i GongfengRepository
 	err := row.Scan(
 		&i.ConnectionID,
@@ -91,48 +107,234 @@ func (q *Queries) BeginGongfengRepositorySync(ctx context.Context, arg BeginGong
 		&i.AttemptedAt,
 		&i.SyncError,
 		&i.UpdatedAt,
+		&i.Enabled,
+		&i.SyncLeaseID,
+		&i.SyncLeaseUntil,
 	)
 	return i, err
 }
 
-const deleteGongfengRepository = `-- name: DeleteGongfengRepository :exec
-DELETE FROM gongfeng_repository WHERE connection_id = $1 AND project_id = $2
+const claimGongfengSnapshot = `-- name: ClaimGongfengSnapshot :one
+UPDATE vcs_pull_request pr SET snapshot_lease_id = gen_random_uuid(),
+    snapshot_lease_until = now() + interval '2 minutes', snapshot_attempted_at = now()
+WHERE pr.id = $1::uuid AND pr.workspace_id = $2::uuid
+  AND pr.provider = 'gongfeng' AND (pr.snapshot_lease_until IS NULL OR pr.snapshot_lease_until < now())
+  AND EXISTS (SELECT 1 FROM vcs_connection vc WHERE vc.id = pr.connection_id
+      AND vc.workspace_id = pr.workspace_id AND vc.provider = 'gongfeng'
+      AND vc.updated_at = $3::timestamptz FOR UPDATE)
+  AND NOT EXISTS (SELECT 1 FROM gongfeng_repository gr WHERE gr.connection_id = pr.connection_id AND NOT gr.enabled
+      AND ((pr.gongfeng_project_id > 0 AND gr.project_id = pr.gongfeng_project_id)
+        OR (pr.gongfeng_project_id = 0 AND gr.path = pr.repo_owner || '/' || pr.repo_name)))
+RETURNING pr.id, pr.workspace_id, pr.connection_id, pr.provider, pr.repo_owner, pr.repo_name, pr.pr_number, pr.title, pr.state, pr.html_url, pr.branch, pr.head_sha, pr.author_login, pr.author_avatar_url, pr.merged_at, pr.closed_at, pr.pr_created_at, pr.pr_updated_at, pr.additions, pr.deletions, pr.changed_files, pr.created_at, pr.updated_at, pr.snapshot_head_sha, pr.snapshot_fetched_at, pr.snapshot, pr.snapshot_error, pr.snapshot_attempted_at, pr.gongfeng_project_id, pr.snapshot_lease_id, pr.snapshot_lease_until
 `
 
-type DeleteGongfengRepositoryParams struct {
-	ConnectionID pgtype.UUID `json:"connection_id"`
-	ProjectID    int64       `json:"project_id"`
+type ClaimGongfengSnapshotParams struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	ConnectionUpdatedAt pgtype.Timestamptz `json:"connection_updated_at"`
 }
 
-func (q *Queries) DeleteGongfengRepository(ctx context.Context, arg DeleteGongfengRepositoryParams) error {
-	_, err := q.db.Exec(ctx, deleteGongfengRepository, arg.ConnectionID, arg.ProjectID)
+func (q *Queries) ClaimGongfengSnapshot(ctx context.Context, arg ClaimGongfengSnapshotParams) (VcsPullRequest, error) {
+	row := q.db.QueryRow(ctx, claimGongfengSnapshot, arg.ID, arg.WorkspaceID, arg.ConnectionUpdatedAt)
+	var i VcsPullRequest
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ConnectionID,
+		&i.Provider,
+		&i.RepoOwner,
+		&i.RepoName,
+		&i.PrNumber,
+		&i.Title,
+		&i.State,
+		&i.HtmlUrl,
+		&i.Branch,
+		&i.HeadSha,
+		&i.AuthorLogin,
+		&i.AuthorAvatarUrl,
+		&i.MergedAt,
+		&i.ClosedAt,
+		&i.PrCreatedAt,
+		&i.PrUpdatedAt,
+		&i.Additions,
+		&i.Deletions,
+		&i.ChangedFiles,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SnapshotHeadSha,
+		&i.SnapshotFetchedAt,
+		&i.Snapshot,
+		&i.SnapshotError,
+		&i.SnapshotAttemptedAt,
+		&i.GongfengProjectID,
+		&i.SnapshotLeaseID,
+		&i.SnapshotLeaseUntil,
+	)
+	return i, err
+}
+
+const deleteGongfengExcludedPullRequestLinks = `-- name: DeleteGongfengExcludedPullRequestLinks :exec
+DELETE FROM issue_vcs_pull_request l
+USING issue_pull_request_exclusion e
+WHERE l.pull_request_id = $1::uuid
+  AND e.issue_id = l.issue_id AND e.pull_request_id = l.pull_request_id
+  AND (l.linked_by_type IS DISTINCT FROM 'member' OR l.linked_at < e.created_at)
+`
+
+func (q *Queries) DeleteGongfengExcludedPullRequestLinks(ctx context.Context, pullRequestID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteGongfengExcludedPullRequestLinks, pullRequestID)
 	return err
 }
 
-const failGongfengSnapshot = `-- name: FailGongfengSnapshot :exec
-UPDATE vcs_pull_request SET snapshot_error = $2, snapshot_attempted_at = now()
-WHERE id = $1 AND head_sha = $3 AND pr_updated_at = $4
+const deleteGongfengSupersededPullRequestExclusions = `-- name: DeleteGongfengSupersededPullRequestExclusions :exec
+DELETE FROM issue_pull_request_exclusion e
+USING issue_vcs_pull_request l
+WHERE e.pull_request_id = $1::uuid
+  AND l.issue_id = e.issue_id AND l.pull_request_id = e.pull_request_id
+  AND l.linked_by_type = 'member' AND l.linked_at >= e.created_at
+`
+
+func (q *Queries) DeleteGongfengSupersededPullRequestExclusions(ctx context.Context, pullRequestID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteGongfengSupersededPullRequestExclusions, pullRequestID)
+	return err
+}
+
+const disableGongfengRepository = `-- name: DisableGongfengRepository :one
+WITH bumped AS (
+    UPDATE vcs_connection SET updated_at = now()
+    WHERE id = $2::uuid AND workspace_id = $3::uuid
+    RETURNING id
+)
+UPDATE gongfeng_repository SET enabled = FALSE, attempted_at = now(), scan_started_at = NULL,
+    sync_lease_id = NULL, sync_lease_until = NULL, hook_revision = NULL, updated_at = now()
+WHERE connection_id IN (SELECT id FROM bumped) AND project_id = $1::bigint AND enabled
+RETURNING gongfeng_repository.connection_id, gongfeng_repository.project_id, gongfeng_repository.path, gongfeng_repository.web_url, gongfeng_repository.clone_url, gongfeng_repository.description, gongfeng_repository.default_branch, gongfeng_repository.hook_id, gongfeng_repository.hook_revision, gongfeng_repository.next_page, gongfeng_repository.scan_started_at, gongfeng_repository.synced_at, gongfeng_repository.attempted_at, gongfeng_repository.sync_error, gongfeng_repository.updated_at, gongfeng_repository.enabled, gongfeng_repository.sync_lease_id, gongfeng_repository.sync_lease_until
+`
+
+type DisableGongfengRepositoryParams struct {
+	ProjectID    int64       `json:"project_id"`
+	ConnectionID pgtype.UUID `json:"connection_id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) DisableGongfengRepository(ctx context.Context, arg DisableGongfengRepositoryParams) (GongfengRepository, error) {
+	row := q.db.QueryRow(ctx, disableGongfengRepository, arg.ProjectID, arg.ConnectionID, arg.WorkspaceID)
+	var i GongfengRepository
+	err := row.Scan(
+		&i.ConnectionID,
+		&i.ProjectID,
+		&i.Path,
+		&i.WebUrl,
+		&i.CloneUrl,
+		&i.Description,
+		&i.DefaultBranch,
+		&i.HookID,
+		&i.HookRevision,
+		&i.NextPage,
+		&i.ScanStartedAt,
+		&i.SyncedAt,
+		&i.AttemptedAt,
+		&i.SyncError,
+		&i.UpdatedAt,
+		&i.Enabled,
+		&i.SyncLeaseID,
+		&i.SyncLeaseUntil,
+	)
+	return i, err
+}
+
+const failGongfengSnapshot = `-- name: FailGongfengSnapshot :execrows
+WITH live_connection AS MATERIALIZED (
+    SELECT vc.id FROM vcs_connection vc
+    JOIN vcs_pull_request pr ON pr.connection_id = vc.id
+    WHERE pr.id = $2::uuid
+      AND vc.updated_at = $6::timestamptz
+    FOR UPDATE OF vc
+)
+UPDATE vcs_pull_request pr SET snapshot_error = $1::text, snapshot_attempted_at = now(),
+    snapshot_lease_id = NULL, snapshot_lease_until = NULL
+WHERE pr.id = $2::uuid AND pr.head_sha = $3::text
+    AND pr.pr_updated_at = $4::timestamptz
+    AND pr.snapshot_lease_id = $5::uuid
+    AND pr.connection_id IN (SELECT id FROM live_connection)
 `
 
 type FailGongfengSnapshotParams struct {
-	ID            pgtype.UUID        `json:"id"`
-	SnapshotError string             `json:"snapshot_error"`
-	HeadSha       string             `json:"head_sha"`
-	PrUpdatedAt   pgtype.Timestamptz `json:"pr_updated_at"`
+	SnapshotError   string             `json:"snapshot_error"`
+	ID              pgtype.UUID        `json:"id"`
+	HeadSha         string             `json:"head_sha"`
+	PrUpdatedAt     pgtype.Timestamptz `json:"pr_updated_at"`
+	SnapshotLeaseID pgtype.UUID        `json:"snapshot_lease_id"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
-func (q *Queries) FailGongfengSnapshot(ctx context.Context, arg FailGongfengSnapshotParams) error {
-	_, err := q.db.Exec(ctx, failGongfengSnapshot,
-		arg.ID,
+func (q *Queries) FailGongfengSnapshot(ctx context.Context, arg FailGongfengSnapshotParams) (int64, error) {
+	result, err := q.db.Exec(ctx, failGongfengSnapshot,
 		arg.SnapshotError,
+		arg.ID,
 		arg.HeadSha,
 		arg.PrUpdatedAt,
+		arg.SnapshotLeaseID,
+		arg.UpdatedAt,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getGongfengPullRequestByProjectKey = `-- name: GetGongfengPullRequestByProjectKey :one
+SELECT id, workspace_id, connection_id, provider, repo_owner, repo_name, pr_number, title, state, html_url, branch, head_sha, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, additions, deletions, changed_files, created_at, updated_at, snapshot_head_sha, snapshot_fetched_at, snapshot, snapshot_error, snapshot_attempted_at, gongfeng_project_id, snapshot_lease_id, snapshot_lease_until FROM vcs_pull_request
+WHERE connection_id = $1 AND provider = 'gongfeng' AND gongfeng_project_id = $2 AND pr_number = $3
+`
+
+type GetGongfengPullRequestByProjectKeyParams struct {
+	ConnectionID      pgtype.UUID `json:"connection_id"`
+	GongfengProjectID int64       `json:"gongfeng_project_id"`
+	PrNumber          int32       `json:"pr_number"`
+}
+
+func (q *Queries) GetGongfengPullRequestByProjectKey(ctx context.Context, arg GetGongfengPullRequestByProjectKeyParams) (VcsPullRequest, error) {
+	row := q.db.QueryRow(ctx, getGongfengPullRequestByProjectKey, arg.ConnectionID, arg.GongfengProjectID, arg.PrNumber)
+	var i VcsPullRequest
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ConnectionID,
+		&i.Provider,
+		&i.RepoOwner,
+		&i.RepoName,
+		&i.PrNumber,
+		&i.Title,
+		&i.State,
+		&i.HtmlUrl,
+		&i.Branch,
+		&i.HeadSha,
+		&i.AuthorLogin,
+		&i.AuthorAvatarUrl,
+		&i.MergedAt,
+		&i.ClosedAt,
+		&i.PrCreatedAt,
+		&i.PrUpdatedAt,
+		&i.Additions,
+		&i.Deletions,
+		&i.ChangedFiles,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SnapshotHeadSha,
+		&i.SnapshotFetchedAt,
+		&i.Snapshot,
+		&i.SnapshotError,
+		&i.SnapshotAttemptedAt,
+		&i.GongfengProjectID,
+		&i.SnapshotLeaseID,
+		&i.SnapshotLeaseUntil,
+	)
+	return i, err
 }
 
 const getGongfengRepository = `-- name: GetGongfengRepository :one
-SELECT connection_id, project_id, path, web_url, clone_url, description, default_branch, hook_id, hook_revision, next_page, scan_started_at, synced_at, attempted_at, sync_error, updated_at FROM gongfeng_repository WHERE connection_id = $1 AND project_id = $2
+SELECT connection_id, project_id, path, web_url, clone_url, description, default_branch, hook_id, hook_revision, next_page, scan_started_at, synced_at, attempted_at, sync_error, updated_at, enabled, sync_lease_id, sync_lease_until FROM gongfeng_repository WHERE connection_id = $1 AND project_id = $2
 `
 
 type GetGongfengRepositoryParams struct {
@@ -159,14 +361,111 @@ func (q *Queries) GetGongfengRepository(ctx context.Context, arg GetGongfengRepo
 		&i.AttemptedAt,
 		&i.SyncError,
 		&i.UpdatedAt,
+		&i.Enabled,
+		&i.SyncLeaseID,
+		&i.SyncLeaseUntil,
 	)
 	return i, err
 }
 
+const getGongfengRepositoryByPath = `-- name: GetGongfengRepositoryByPath :one
+SELECT connection_id, project_id, path, web_url, clone_url, description, default_branch, hook_id, hook_revision, next_page, scan_started_at, synced_at, attempted_at, sync_error, updated_at, enabled, sync_lease_id, sync_lease_until FROM gongfeng_repository
+WHERE connection_id = $1 AND path = $2
+ORDER BY enabled DESC, project_id
+LIMIT 1
+`
+
+type GetGongfengRepositoryByPathParams struct {
+	ConnectionID pgtype.UUID `json:"connection_id"`
+	Path         string      `json:"path"`
+}
+
+func (q *Queries) GetGongfengRepositoryByPath(ctx context.Context, arg GetGongfengRepositoryByPathParams) (GongfengRepository, error) {
+	row := q.db.QueryRow(ctx, getGongfengRepositoryByPath, arg.ConnectionID, arg.Path)
+	var i GongfengRepository
+	err := row.Scan(
+		&i.ConnectionID,
+		&i.ProjectID,
+		&i.Path,
+		&i.WebUrl,
+		&i.CloneUrl,
+		&i.Description,
+		&i.DefaultBranch,
+		&i.HookID,
+		&i.HookRevision,
+		&i.NextPage,
+		&i.ScanStartedAt,
+		&i.SyncedAt,
+		&i.AttemptedAt,
+		&i.SyncError,
+		&i.UpdatedAt,
+		&i.Enabled,
+		&i.SyncLeaseID,
+		&i.SyncLeaseUntil,
+	)
+	return i, err
+}
+
+const listAllGongfengRepositories = `-- name: ListAllGongfengRepositories :many
+SELECT gr.connection_id, gr.project_id, gr.path, gr.web_url, gr.clone_url, gr.description, gr.default_branch, gr.hook_id, gr.hook_revision, gr.next_page, gr.scan_started_at, gr.synced_at, gr.attempted_at, gr.sync_error, gr.updated_at, gr.enabled, gr.sync_lease_id, gr.sync_lease_until FROM gongfeng_repository gr
+JOIN vcs_connection vc ON vc.id = gr.connection_id
+WHERE gr.connection_id = $1 AND vc.workspace_id = $2
+ORDER BY gr.path
+`
+
+type ListAllGongfengRepositoriesParams struct {
+	ConnectionID pgtype.UUID `json:"connection_id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) ListAllGongfengRepositories(ctx context.Context, arg ListAllGongfengRepositoriesParams) ([]GongfengRepository, error) {
+	rows, err := q.db.Query(ctx, listAllGongfengRepositories, arg.ConnectionID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GongfengRepository{}
+	for rows.Next() {
+		var i GongfengRepository
+		if err := rows.Scan(
+			&i.ConnectionID,
+			&i.ProjectID,
+			&i.Path,
+			&i.WebUrl,
+			&i.CloneUrl,
+			&i.Description,
+			&i.DefaultBranch,
+			&i.HookID,
+			&i.HookRevision,
+			&i.NextPage,
+			&i.ScanStartedAt,
+			&i.SyncedAt,
+			&i.AttemptedAt,
+			&i.SyncError,
+			&i.UpdatedAt,
+			&i.Enabled,
+			&i.SyncLeaseID,
+			&i.SyncLeaseUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDueGongfengPullRequests = `-- name: ListDueGongfengPullRequests :many
-SELECT pr.id, pr.workspace_id, pr.connection_id, pr.provider, pr.repo_owner, pr.repo_name, pr.pr_number, pr.title, pr.state, pr.html_url, pr.branch, pr.head_sha, pr.author_login, pr.author_avatar_url, pr.merged_at, pr.closed_at, pr.pr_created_at, pr.pr_updated_at, pr.additions, pr.deletions, pr.changed_files, pr.created_at, pr.updated_at, pr.snapshot_head_sha, pr.snapshot_fetched_at, pr.snapshot, pr.snapshot_error, pr.snapshot_attempted_at FROM vcs_pull_request pr JOIN vcs_connection vc ON vc.id = pr.connection_id
+SELECT pr.id, pr.workspace_id, pr.connection_id, pr.provider, pr.repo_owner, pr.repo_name, pr.pr_number, pr.title, pr.state, pr.html_url, pr.branch, pr.head_sha, pr.author_login, pr.author_avatar_url, pr.merged_at, pr.closed_at, pr.pr_created_at, pr.pr_updated_at, pr.additions, pr.deletions, pr.changed_files, pr.created_at, pr.updated_at, pr.snapshot_head_sha, pr.snapshot_fetched_at, pr.snapshot, pr.snapshot_error, pr.snapshot_attempted_at, pr.gongfeng_project_id, pr.snapshot_lease_id, pr.snapshot_lease_until FROM vcs_pull_request pr JOIN vcs_connection vc ON vc.id = pr.connection_id
 WHERE pr.provider = 'gongfeng' AND pr.state IN ('open', 'draft')
     AND EXISTS (SELECT 1 FROM issue_vcs_pull_request ipr WHERE ipr.pull_request_id = pr.id)
+    AND (pr.snapshot_lease_until IS NULL OR pr.snapshot_lease_until < now())
+    AND NOT EXISTS (SELECT 1 FROM gongfeng_repository gr
+        WHERE gr.connection_id = pr.connection_id AND NOT gr.enabled
+          AND ((pr.gongfeng_project_id > 0 AND gr.project_id = pr.gongfeng_project_id)
+            OR (pr.gongfeng_project_id = 0 AND gr.path = pr.repo_owner || '/' || pr.repo_name)))
     AND (pr.snapshot_attempted_at IS NULL OR (pr.snapshot_head_sha <> pr.head_sha AND pr.snapshot_error = '') OR pr.snapshot_attempted_at < now() - CASE WHEN pr.snapshot_error <> '' THEN interval '5 minutes' ELSE interval '2 minutes' END)
 ORDER BY (pr.id > $1::uuid) DESC, pr.id LIMIT 40
 `
@@ -209,6 +508,9 @@ func (q *Queries) ListDueGongfengPullRequests(ctx context.Context, afterID pgtyp
 			&i.Snapshot,
 			&i.SnapshotError,
 			&i.SnapshotAttemptedAt,
+			&i.GongfengProjectID,
+			&i.SnapshotLeaseID,
+			&i.SnapshotLeaseUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -221,9 +523,10 @@ func (q *Queries) ListDueGongfengPullRequests(ctx context.Context, afterID pgtyp
 }
 
 const listDueGongfengRepositories = `-- name: ListDueGongfengRepositories :many
-SELECT gr.connection_id, gr.project_id, gr.path, gr.web_url, gr.clone_url, gr.description, gr.default_branch, gr.hook_id, gr.hook_revision, gr.next_page, gr.scan_started_at, gr.synced_at, gr.attempted_at, gr.sync_error, gr.updated_at FROM gongfeng_repository gr JOIN vcs_connection vc ON vc.id = gr.connection_id
-WHERE vc.provider = 'gongfeng' AND
-    (gr.attempted_at IS NULL OR gr.attempted_at < now() - CASE WHEN gr.sync_error <> '' THEN interval '5 minutes' ELSE interval '1 minute' END)
+SELECT gr.connection_id, gr.project_id, gr.path, gr.web_url, gr.clone_url, gr.description, gr.default_branch, gr.hook_id, gr.hook_revision, gr.next_page, gr.scan_started_at, gr.synced_at, gr.attempted_at, gr.sync_error, gr.updated_at, gr.enabled, gr.sync_lease_id, gr.sync_lease_until FROM gongfeng_repository gr JOIN vcs_connection vc ON vc.id = gr.connection_id
+WHERE vc.provider = 'gongfeng' AND gr.enabled
+    AND (gr.sync_lease_until IS NULL OR gr.sync_lease_until < now())
+    AND (gr.attempted_at IS NULL OR gr.attempted_at < now() - CASE WHEN gr.sync_error <> '' THEN interval '5 minutes' ELSE interval '1 minute' END)
 ORDER BY (ROW(gr.connection_id, gr.project_id) > ROW($1::uuid, $2::bigint)) DESC,
     gr.connection_id, gr.project_id LIMIT 20
 `
@@ -233,7 +536,6 @@ type ListDueGongfengRepositoriesParams struct {
 	AfterProject    int64       `json:"after_project"`
 }
 
-// Rotate across bounded batches even when an entire connection is paused.
 func (q *Queries) ListDueGongfengRepositories(ctx context.Context, arg ListDueGongfengRepositoriesParams) ([]GongfengRepository, error) {
 	rows, err := q.db.Query(ctx, listDueGongfengRepositories, arg.AfterConnection, arg.AfterProject)
 	if err != nil {
@@ -259,6 +561,87 @@ func (q *Queries) ListDueGongfengRepositories(ctx context.Context, arg ListDueGo
 			&i.AttemptedAt,
 			&i.SyncError,
 			&i.UpdatedAt,
+			&i.Enabled,
+			&i.SyncLeaseID,
+			&i.SyncLeaseUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGongfengProjectPullRequests = `-- name: ListGongfengProjectPullRequests :many
+SELECT id, workspace_id, connection_id, provider, repo_owner, repo_name, pr_number, title, state, html_url, branch, head_sha, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, additions, deletions, changed_files, created_at, updated_at, snapshot_head_sha, snapshot_fetched_at, snapshot, snapshot_error, snapshot_attempted_at, gongfeng_project_id, snapshot_lease_id, snapshot_lease_until FROM vcs_pull_request
+WHERE connection_id = $1::uuid AND provider = 'gongfeng'
+  AND (gongfeng_project_id = $2::bigint
+    OR (gongfeng_project_id = 0 AND repo_owner = $3::text AND repo_name = $4::text)
+    OR (gongfeng_project_id = 0 AND repo_owner = $5::text AND repo_name = $6::text))
+ORDER BY pr_number, pr_updated_at DESC
+FOR UPDATE
+`
+
+type ListGongfengProjectPullRequestsParams struct {
+	ConnectionID pgtype.UUID `json:"connection_id"`
+	ProjectID    int64       `json:"project_id"`
+	OldOwner     string      `json:"old_owner"`
+	OldName      string      `json:"old_name"`
+	NewOwner     string      `json:"new_owner"`
+	NewName      string      `json:"new_name"`
+}
+
+func (q *Queries) ListGongfengProjectPullRequests(ctx context.Context, arg ListGongfengProjectPullRequestsParams) ([]VcsPullRequest, error) {
+	rows, err := q.db.Query(ctx, listGongfengProjectPullRequests,
+		arg.ConnectionID,
+		arg.ProjectID,
+		arg.OldOwner,
+		arg.OldName,
+		arg.NewOwner,
+		arg.NewName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []VcsPullRequest{}
+	for rows.Next() {
+		var i VcsPullRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ConnectionID,
+			&i.Provider,
+			&i.RepoOwner,
+			&i.RepoName,
+			&i.PrNumber,
+			&i.Title,
+			&i.State,
+			&i.HtmlUrl,
+			&i.Branch,
+			&i.HeadSha,
+			&i.AuthorLogin,
+			&i.AuthorAvatarUrl,
+			&i.MergedAt,
+			&i.ClosedAt,
+			&i.PrCreatedAt,
+			&i.PrUpdatedAt,
+			&i.Additions,
+			&i.Deletions,
+			&i.ChangedFiles,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SnapshotHeadSha,
+			&i.SnapshotFetchedAt,
+			&i.Snapshot,
+			&i.SnapshotError,
+			&i.SnapshotAttemptedAt,
+			&i.GongfengProjectID,
+			&i.SnapshotLeaseID,
+			&i.SnapshotLeaseUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -271,9 +654,9 @@ func (q *Queries) ListDueGongfengRepositories(ctx context.Context, arg ListDueGo
 }
 
 const listGongfengRepositories = `-- name: ListGongfengRepositories :many
-SELECT gr.connection_id, gr.project_id, gr.path, gr.web_url, gr.clone_url, gr.description, gr.default_branch, gr.hook_id, gr.hook_revision, gr.next_page, gr.scan_started_at, gr.synced_at, gr.attempted_at, gr.sync_error, gr.updated_at FROM gongfeng_repository gr
+SELECT gr.connection_id, gr.project_id, gr.path, gr.web_url, gr.clone_url, gr.description, gr.default_branch, gr.hook_id, gr.hook_revision, gr.next_page, gr.scan_started_at, gr.synced_at, gr.attempted_at, gr.sync_error, gr.updated_at, gr.enabled, gr.sync_lease_id, gr.sync_lease_until FROM gongfeng_repository gr
 JOIN vcs_connection vc ON vc.id = gr.connection_id
-WHERE gr.connection_id = $1 AND vc.workspace_id = $2
+WHERE gr.connection_id = $1 AND vc.workspace_id = $2 AND gr.enabled
 ORDER BY gr.path
 `
 
@@ -307,6 +690,9 @@ func (q *Queries) ListGongfengRepositories(ctx context.Context, arg ListGongfeng
 			&i.AttemptedAt,
 			&i.SyncError,
 			&i.UpdatedAt,
+			&i.Enabled,
+			&i.SyncLeaseID,
+			&i.SyncLeaseUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -318,9 +704,97 @@ func (q *Queries) ListGongfengRepositories(ctx context.Context, arg ListGongfeng
 	return items, nil
 }
 
+const lockGongfengRepository = `-- name: LockGongfengRepository :one
+SELECT connection_id, project_id, path, web_url, clone_url, description, default_branch, hook_id, hook_revision, next_page, scan_started_at, synced_at, attempted_at, sync_error, updated_at, enabled, sync_lease_id, sync_lease_until FROM gongfeng_repository
+WHERE connection_id = $1 AND project_id = $2
+FOR UPDATE
+`
+
+type LockGongfengRepositoryParams struct {
+	ConnectionID pgtype.UUID `json:"connection_id"`
+	ProjectID    int64       `json:"project_id"`
+}
+
+func (q *Queries) LockGongfengRepository(ctx context.Context, arg LockGongfengRepositoryParams) (GongfengRepository, error) {
+	row := q.db.QueryRow(ctx, lockGongfengRepository, arg.ConnectionID, arg.ProjectID)
+	var i GongfengRepository
+	err := row.Scan(
+		&i.ConnectionID,
+		&i.ProjectID,
+		&i.Path,
+		&i.WebUrl,
+		&i.CloneUrl,
+		&i.Description,
+		&i.DefaultBranch,
+		&i.HookID,
+		&i.HookRevision,
+		&i.NextPage,
+		&i.ScanStartedAt,
+		&i.SyncedAt,
+		&i.AttemptedAt,
+		&i.SyncError,
+		&i.UpdatedAt,
+		&i.Enabled,
+		&i.SyncLeaseID,
+		&i.SyncLeaseUntil,
+	)
+	return i, err
+}
+
+const mergeGongfengPullRequestDuplicate = `-- name: MergeGongfengPullRequestDuplicate :exec
+WITH moved_links AS (
+    INSERT INTO issue_vcs_pull_request (issue_id, pull_request_id, close_intent, linked_by_type, linked_by_id, linked_at)
+    SELECT issue_id, $2::uuid, close_intent, linked_by_type, linked_by_id, linked_at
+    FROM issue_vcs_pull_request WHERE pull_request_id = $1::uuid
+    ON CONFLICT (issue_id, pull_request_id) DO UPDATE SET
+        close_intent = issue_vcs_pull_request.close_intent OR EXCLUDED.close_intent,
+        linked_by_type = CASE
+            WHEN issue_vcs_pull_request.linked_by_type = 'member'
+                AND (EXCLUDED.linked_by_type IS DISTINCT FROM 'member' OR issue_vcs_pull_request.linked_at >= EXCLUDED.linked_at)
+                THEN issue_vcs_pull_request.linked_by_type
+            ELSE EXCLUDED.linked_by_type END,
+        linked_by_id = CASE
+            WHEN issue_vcs_pull_request.linked_by_type = 'member'
+                AND (EXCLUDED.linked_by_type IS DISTINCT FROM 'member' OR issue_vcs_pull_request.linked_at >= EXCLUDED.linked_at)
+                THEN issue_vcs_pull_request.linked_by_id
+            ELSE EXCLUDED.linked_by_id END,
+        linked_at = CASE
+            WHEN issue_vcs_pull_request.linked_by_type = 'member' AND EXCLUDED.linked_by_type = 'member'
+                THEN GREATEST(issue_vcs_pull_request.linked_at, EXCLUDED.linked_at)
+            WHEN issue_vcs_pull_request.linked_by_type = 'member' THEN issue_vcs_pull_request.linked_at
+            WHEN EXCLUDED.linked_by_type = 'member' THEN EXCLUDED.linked_at
+            ELSE LEAST(issue_vcs_pull_request.linked_at, EXCLUDED.linked_at) END
+), moved_exclusions AS (
+    INSERT INTO issue_pull_request_exclusion (issue_id, pull_request_id, workspace_id, excluded_by_type, excluded_by_id, created_at)
+    SELECT issue_id, $2::uuid, workspace_id, excluded_by_type, excluded_by_id, created_at
+    FROM issue_pull_request_exclusion WHERE pull_request_id = $1::uuid
+    ON CONFLICT (issue_id, pull_request_id) DO UPDATE SET
+        workspace_id = CASE WHEN EXCLUDED.created_at > issue_pull_request_exclusion.created_at THEN EXCLUDED.workspace_id ELSE issue_pull_request_exclusion.workspace_id END,
+        excluded_by_type = CASE WHEN EXCLUDED.created_at > issue_pull_request_exclusion.created_at THEN EXCLUDED.excluded_by_type ELSE issue_pull_request_exclusion.excluded_by_type END,
+        excluded_by_id = CASE WHEN EXCLUDED.created_at > issue_pull_request_exclusion.created_at THEN EXCLUDED.excluded_by_id ELSE issue_pull_request_exclusion.excluded_by_id END,
+        created_at = GREATEST(issue_pull_request_exclusion.created_at, EXCLUDED.created_at)
+), deleted_links AS (
+    DELETE FROM issue_vcs_pull_request WHERE pull_request_id = $1::uuid
+), deleted_exclusions AS (
+    DELETE FROM issue_pull_request_exclusion WHERE pull_request_id = $1::uuid
+)
+DELETE FROM vcs_pull_request WHERE id = $1::uuid
+`
+
+type MergeGongfengPullRequestDuplicateParams struct {
+	SourceID pgtype.UUID `json:"source_id"`
+	TargetID pgtype.UUID `json:"target_id"`
+}
+
+func (q *Queries) MergeGongfengPullRequestDuplicate(ctx context.Context, arg MergeGongfengPullRequestDuplicateParams) error {
+	_, err := q.db.Exec(ctx, mergeGongfengPullRequestDuplicate, arg.SourceID, arg.TargetID)
+	return err
+}
+
 const resetGongfengConnectionHooks = `-- name: ResetGongfengConnectionHooks :exec
-UPDATE gongfeng_repository SET hook_revision = NULL, attempted_at = NULL, updated_at = now()
-WHERE connection_id = $1
+UPDATE gongfeng_repository SET hook_revision = NULL, attempted_at = NULL,
+    sync_lease_id = NULL, sync_lease_until = NULL, updated_at = now()
+WHERE connection_id = $1 AND enabled
 `
 
 func (q *Queries) ResetGongfengConnectionHooks(ctx context.Context, connectionID pgtype.UUID) error {
@@ -330,8 +804,8 @@ func (q *Queries) ResetGongfengConnectionHooks(ctx context.Context, connectionID
 
 const resetGongfengRepositorySync = `-- name: ResetGongfengRepositorySync :one
 UPDATE gongfeng_repository SET next_page = 1, scan_started_at = NULL, synced_at = NULL, attempted_at = NULL,
-    hook_revision = NULL, sync_error = '', updated_at = now()
-WHERE connection_id = $1 AND project_id = $2 RETURNING connection_id, project_id, path, web_url, clone_url, description, default_branch, hook_id, hook_revision, next_page, scan_started_at, synced_at, attempted_at, sync_error, updated_at
+    hook_revision = NULL, sync_error = '', sync_lease_id = NULL, sync_lease_until = NULL, updated_at = now()
+WHERE connection_id = $1 AND project_id = $2 AND enabled RETURNING connection_id, project_id, path, web_url, clone_url, description, default_branch, hook_id, hook_revision, next_page, scan_started_at, synced_at, attempted_at, sync_error, updated_at, enabled, sync_lease_id, sync_lease_until
 `
 
 type ResetGongfengRepositorySyncParams struct {
@@ -358,38 +832,105 @@ func (q *Queries) ResetGongfengRepositorySync(ctx context.Context, arg ResetGong
 		&i.AttemptedAt,
 		&i.SyncError,
 		&i.UpdatedAt,
+		&i.Enabled,
+		&i.SyncLeaseID,
+		&i.SyncLeaseUntil,
+	)
+	return i, err
+}
+
+const saveGongfengRepositoryHook = `-- name: SaveGongfengRepositoryHook :one
+UPDATE gongfeng_repository SET hook_id = $1::bigint,
+    hook_revision = $2::timestamptz
+WHERE connection_id = $3::uuid AND project_id = $4::bigint
+    AND updated_at = $5::timestamptz
+    AND sync_lease_id = $6::uuid AND enabled
+RETURNING connection_id, project_id, path, web_url, clone_url, description, default_branch, hook_id, hook_revision, next_page, scan_started_at, synced_at, attempted_at, sync_error, updated_at, enabled, sync_lease_id, sync_lease_until
+`
+
+type SaveGongfengRepositoryHookParams struct {
+	HookID       int64              `json:"hook_id"`
+	HookRevision pgtype.Timestamptz `json:"hook_revision"`
+	ConnectionID pgtype.UUID        `json:"connection_id"`
+	ProjectID    int64              `json:"project_id"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	LeaseID      pgtype.UUID        `json:"lease_id"`
+}
+
+func (q *Queries) SaveGongfengRepositoryHook(ctx context.Context, arg SaveGongfengRepositoryHookParams) (GongfengRepository, error) {
+	row := q.db.QueryRow(ctx, saveGongfengRepositoryHook,
+		arg.HookID,
+		arg.HookRevision,
+		arg.ConnectionID,
+		arg.ProjectID,
+		arg.UpdatedAt,
+		arg.LeaseID,
+	)
+	var i GongfengRepository
+	err := row.Scan(
+		&i.ConnectionID,
+		&i.ProjectID,
+		&i.Path,
+		&i.WebUrl,
+		&i.CloneUrl,
+		&i.Description,
+		&i.DefaultBranch,
+		&i.HookID,
+		&i.HookRevision,
+		&i.NextPage,
+		&i.ScanStartedAt,
+		&i.SyncedAt,
+		&i.AttemptedAt,
+		&i.SyncError,
+		&i.UpdatedAt,
+		&i.Enabled,
+		&i.SyncLeaseID,
+		&i.SyncLeaseUntil,
 	)
 	return i, err
 }
 
 const saveGongfengRepositorySync = `-- name: SaveGongfengRepositorySync :execrows
-UPDATE gongfeng_repository SET hook_id = $4, next_page = $5, sync_error = $6, hook_revision = $7,
-    synced_at = CASE WHEN $8::boolean THEN scan_started_at ELSE synced_at END,
-    scan_started_at = CASE WHEN $8::boolean THEN NULL ELSE scan_started_at END
-WHERE connection_id = $1 AND project_id = $2 AND updated_at = $3
+WITH live_connection AS MATERIALIZED (
+    SELECT id FROM vcs_connection
+    WHERE id = $9::uuid
+      AND updated_at = $10::timestamptz
+    FOR UPDATE
+)
+UPDATE gongfeng_repository SET hook_id = $1::bigint, next_page = $2::integer,
+    sync_error = $3::text, hook_revision = $4,
+    synced_at = CASE WHEN $5::boolean THEN scan_started_at ELSE synced_at END,
+    scan_started_at = CASE WHEN $5::boolean THEN NULL ELSE scan_started_at END,
+    sync_lease_id = NULL, sync_lease_until = NULL
+WHERE connection_id IN (SELECT id FROM live_connection) AND project_id = $6::bigint
+    AND updated_at = $7::timestamptz AND sync_lease_id = $8::uuid AND enabled
 `
 
 type SaveGongfengRepositorySyncParams struct {
-	ConnectionID pgtype.UUID        `json:"connection_id"`
-	ProjectID    int64              `json:"project_id"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	HookID       int64              `json:"hook_id"`
-	NextPage     int32              `json:"next_page"`
-	SyncError    string             `json:"sync_error"`
-	HookRevision pgtype.Timestamptz `json:"hook_revision"`
-	Completed    bool               `json:"completed"`
+	HookID              int64              `json:"hook_id"`
+	NextPage            int32              `json:"next_page"`
+	SyncError           string             `json:"sync_error"`
+	HookRevision        pgtype.Timestamptz `json:"hook_revision"`
+	Completed           bool               `json:"completed"`
+	ProjectID           int64              `json:"project_id"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	LeaseID             pgtype.UUID        `json:"lease_id"`
+	ConnectionID        pgtype.UUID        `json:"connection_id"`
+	ConnectionUpdatedAt pgtype.Timestamptz `json:"connection_updated_at"`
 }
 
 func (q *Queries) SaveGongfengRepositorySync(ctx context.Context, arg SaveGongfengRepositorySyncParams) (int64, error) {
 	result, err := q.db.Exec(ctx, saveGongfengRepositorySync,
-		arg.ConnectionID,
-		arg.ProjectID,
-		arg.UpdatedAt,
 		arg.HookID,
 		arg.NextPage,
 		arg.SyncError,
 		arg.HookRevision,
 		arg.Completed,
+		arg.ProjectID,
+		arg.UpdatedAt,
+		arg.LeaseID,
+		arg.ConnectionID,
+		arg.ConnectionUpdatedAt,
 	)
 	if err != nil {
 		return 0, err
@@ -398,29 +939,163 @@ func (q *Queries) SaveGongfengRepositorySync(ctx context.Context, arg SaveGongfe
 }
 
 const saveGongfengSnapshot = `-- name: SaveGongfengSnapshot :execrows
-UPDATE vcs_pull_request SET snapshot_head_sha = $2, snapshot_fetched_at = now(), snapshot_attempted_at = now(), snapshot = $3, snapshot_error = ''
-WHERE vcs_pull_request.id = $1 AND head_sha = $2 AND pr_updated_at = $4
-    AND EXISTS (SELECT 1 FROM vcs_connection vc WHERE vc.id = vcs_pull_request.connection_id AND vc.updated_at = $5)
+WITH live_connection AS MATERIALIZED (
+    SELECT vc.id FROM vcs_connection vc
+    JOIN vcs_pull_request pr ON pr.connection_id = vc.id
+    WHERE pr.id = $3::uuid
+      AND vc.updated_at = $6::timestamptz
+    FOR UPDATE OF vc
+)
+UPDATE vcs_pull_request pr SET snapshot_head_sha = $1::text, snapshot_fetched_at = now(), snapshot_attempted_at = now(),
+    snapshot = $2::jsonb, snapshot_error = '', snapshot_lease_id = NULL, snapshot_lease_until = NULL
+WHERE pr.id = $3::uuid AND pr.head_sha = $1::text
+    AND pr.pr_updated_at = $4::timestamptz
+    AND pr.snapshot_lease_id = $5::uuid
+    AND pr.connection_id IN (SELECT id FROM live_connection)
 `
 
 type SaveGongfengSnapshotParams struct {
-	ID              pgtype.UUID        `json:"id"`
 	SnapshotHeadSha string             `json:"snapshot_head_sha"`
 	Snapshot        []byte             `json:"snapshot"`
+	ID              pgtype.UUID        `json:"id"`
 	PrUpdatedAt     pgtype.Timestamptz `json:"pr_updated_at"`
+	SnapshotLeaseID pgtype.UUID        `json:"snapshot_lease_id"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) SaveGongfengSnapshot(ctx context.Context, arg SaveGongfengSnapshotParams) (int64, error) {
 	result, err := q.db.Exec(ctx, saveGongfengSnapshot,
-		arg.ID,
 		arg.SnapshotHeadSha,
 		arg.Snapshot,
+		arg.ID,
 		arg.PrUpdatedAt,
+		arg.SnapshotLeaseID,
 		arg.UpdatedAt,
 	)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updateGongfengPullRequestIdentity = `-- name: UpdateGongfengPullRequestIdentity :exec
+UPDATE vcs_pull_request SET gongfeng_project_id = $2, repo_owner = $3, repo_name = $4,
+    html_url = CASE WHEN $5::text = '' THEN html_url
+        ELSE rtrim($5::text, '/') || '/merge_requests/' || pr_number::text END,
+    updated_at = now()
+WHERE id = $1
+`
+
+type UpdateGongfengPullRequestIdentityParams struct {
+	ID                pgtype.UUID `json:"id"`
+	GongfengProjectID int64       `json:"gongfeng_project_id"`
+	RepoOwner         string      `json:"repo_owner"`
+	RepoName          string      `json:"repo_name"`
+	WebUrl            string      `json:"web_url"`
+}
+
+func (q *Queries) UpdateGongfengPullRequestIdentity(ctx context.Context, arg UpdateGongfengPullRequestIdentityParams) error {
+	_, err := q.db.Exec(ctx, updateGongfengPullRequestIdentity,
+		arg.ID,
+		arg.GongfengProjectID,
+		arg.RepoOwner,
+		arg.RepoName,
+		arg.WebUrl,
+	)
+	return err
+}
+
+const updateGongfengRepositoryIdentity = `-- name: UpdateGongfengRepositoryIdentity :one
+UPDATE gongfeng_repository SET path = $3, web_url = $4
+WHERE connection_id = $1 AND project_id = $2 AND enabled
+RETURNING connection_id, project_id, path, web_url, clone_url, description, default_branch, hook_id, hook_revision, next_page, scan_started_at, synced_at, attempted_at, sync_error, updated_at, enabled, sync_lease_id, sync_lease_until
+`
+
+type UpdateGongfengRepositoryIdentityParams struct {
+	ConnectionID pgtype.UUID `json:"connection_id"`
+	ProjectID    int64       `json:"project_id"`
+	Path         string      `json:"path"`
+	WebUrl       string      `json:"web_url"`
+}
+
+func (q *Queries) UpdateGongfengRepositoryIdentity(ctx context.Context, arg UpdateGongfengRepositoryIdentityParams) (GongfengRepository, error) {
+	row := q.db.QueryRow(ctx, updateGongfengRepositoryIdentity,
+		arg.ConnectionID,
+		arg.ProjectID,
+		arg.Path,
+		arg.WebUrl,
+	)
+	var i GongfengRepository
+	err := row.Scan(
+		&i.ConnectionID,
+		&i.ProjectID,
+		&i.Path,
+		&i.WebUrl,
+		&i.CloneUrl,
+		&i.Description,
+		&i.DefaultBranch,
+		&i.HookID,
+		&i.HookRevision,
+		&i.NextPage,
+		&i.ScanStartedAt,
+		&i.SyncedAt,
+		&i.AttemptedAt,
+		&i.SyncError,
+		&i.UpdatedAt,
+		&i.Enabled,
+		&i.SyncLeaseID,
+		&i.SyncLeaseUntil,
+	)
+	return i, err
+}
+
+const updateGongfengRepositoryMetadata = `-- name: UpdateGongfengRepositoryMetadata :one
+UPDATE gongfeng_repository SET path = $3, web_url = $4, clone_url = $5,
+    description = $6, default_branch = $7
+WHERE connection_id = $1 AND project_id = $2 AND enabled
+RETURNING connection_id, project_id, path, web_url, clone_url, description, default_branch, hook_id, hook_revision, next_page, scan_started_at, synced_at, attempted_at, sync_error, updated_at, enabled, sync_lease_id, sync_lease_until
+`
+
+type UpdateGongfengRepositoryMetadataParams struct {
+	ConnectionID  pgtype.UUID `json:"connection_id"`
+	ProjectID     int64       `json:"project_id"`
+	Path          string      `json:"path"`
+	WebUrl        string      `json:"web_url"`
+	CloneUrl      string      `json:"clone_url"`
+	Description   string      `json:"description"`
+	DefaultBranch string      `json:"default_branch"`
+}
+
+func (q *Queries) UpdateGongfengRepositoryMetadata(ctx context.Context, arg UpdateGongfengRepositoryMetadataParams) (GongfengRepository, error) {
+	row := q.db.QueryRow(ctx, updateGongfengRepositoryMetadata,
+		arg.ConnectionID,
+		arg.ProjectID,
+		arg.Path,
+		arg.WebUrl,
+		arg.CloneUrl,
+		arg.Description,
+		arg.DefaultBranch,
+	)
+	var i GongfengRepository
+	err := row.Scan(
+		&i.ConnectionID,
+		&i.ProjectID,
+		&i.Path,
+		&i.WebUrl,
+		&i.CloneUrl,
+		&i.Description,
+		&i.DefaultBranch,
+		&i.HookID,
+		&i.HookRevision,
+		&i.NextPage,
+		&i.ScanStartedAt,
+		&i.SyncedAt,
+		&i.AttemptedAt,
+		&i.SyncError,
+		&i.UpdatedAt,
+		&i.Enabled,
+		&i.SyncLeaseID,
+		&i.SyncLeaseUntil,
+	)
+	return i, err
 }

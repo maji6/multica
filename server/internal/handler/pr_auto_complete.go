@@ -308,6 +308,60 @@ func (h *Handler) maybeAutoCompleteIssue(ctx context.Context, workspaceID, issue
 	})
 }
 
+// maybeAutoCompleteIssueInTransaction performs the merge-driven status write
+// through the caller's transaction and returns its post-commit notifications.
+// Gongfeng mirroring uses this so a connection fence covers both the mirrored
+// MR/link state and the resulting issue transition.
+func (h *Handler) maybeAutoCompleteIssueInTransaction(ctx context.Context, workspaceID, issueID pgtype.UUID, resolver *issuestatus.Resolver) (func(*Handler), error) {
+	issue, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: workspaceID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	ws, err := h.Queries.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	d, err := h.decidePRAutoComplete(ctx, ws, issue, resolver)
+	if err != nil {
+		return nil, err
+	}
+	if d.State != prAutoCompleteAllMerged {
+		return nil, nil
+	}
+	updated, err := h.Queries.MoveIssueFromPullRequests(ctx, db.MoveIssueFromPullRequestsParams{
+		ID: issue.ID, WorkspaceID: issue.WorkspaceID, TargetStatus: d.Target, ExpectedStatus: issue.Status,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	var cancelledWakeups []db.AgentTaskQueue
+	if err == nil {
+		cancelledWakeups, err = service.StopClosedIssueWakeups(ctx, h.Queries, updated)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return func(live *Handler) {
+		live.broadcastCancelledWakeups(ctx, updated.WorkspaceID, cancelledWakeups)
+		if updated.ParentIssueID.Valid {
+			live.processChildEvents(ctx, updated.ParentIssueID)
+		}
+		prefix := live.getIssuePrefix(ctx, issue.WorkspaceID)
+		resp := issueToResponse(updated, prefix)
+		live.fillStatusCategory(ctx, updated.WorkspaceID, &resp)
+		live.publish(protocol.EventIssueUpdated, uuidToString(workspaceID), "system", "", map[string]any{
+			"issue": resp, "status_changed": true, "prev_status": issue.Status,
+			"creator_type": issue.CreatorType, "creator_id": uuidToString(issue.CreatorID),
+			"source": "pr_automation", "pull_requests": prNumberList(d.PRs),
+			"duplicate_of_issue_id":      liveDuplicateMark(updated.Status, updated.DuplicateOfIssueID),
+			"prev_duplicate_of_issue_id": liveDuplicateMark(issue.Status, issue.DuplicateOfIssueID),
+		})
+	}, nil
+}
+
 // prNumberList renders "#12, #15" for the activity entry.
 func prNumberList(prs []db.ListIssueLinkedPullRequestStatesRow) string {
 	parts := make([]string, 0, len(prs))

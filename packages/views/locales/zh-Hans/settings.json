@@ -839,7 +839,8 @@
     "contact_admin": "请工作区管理员连接 Git 代码托管实例。",
     "webhook_setup_title": "在代码托管中完成设置",
     "webhook_setup_description": "在仓库或组织中添加 Webhook，使用下方的地址和密钥。Forgejo/Gitea：格式选择 Gitea，事件勾选 Pull Request（及 Commit Status）。GitLab：将密钥填入 token，并启用 Merge request 与 Pipeline 事件。",
-    "gongfeng_webhook_setup_description": "在工蜂仓库设置中添加 Webhook，填入下方地址，将密钥填入 token，并启用 Merge request（合并请求）事件。",
+    "gongfeng_webhook_rotated_title": "Webhook 密钥已重新生成",
+    "gongfeng_webhook_rotated_description": "Multica 正在自动更新已选仓库的 Webhook。你手动添加的 Webhook 仍需使用下方新密钥更新。",
     "webhook_url_label": "Webhook 地址",
     "webhook_secret_label": "Webhook 密钥",
     "webhook_secret_warning": "请立即复制密钥。它只显示一次，之后无法再次获取。",
@@ -863,6 +864,7 @@
     "regenerate_webhook": "重新生成 Webhook",
     "rotate_confirm_title": "重新生成 Webhook 密钥？",
     "rotate_confirm_description": "当前的 Webhook 密钥将立即失效。在代码托管设置中更新密钥前，来自该平台的推送将无法送达。",
+    "gongfeng_rotate_confirm_description": "当前的 Webhook 密钥将立即失效。Multica 会自动更新已选仓库的 Webhook；你手动添加的 Webhook 仍需自行更新。",
     "rotate_confirm_cancel": "取消",
     "rotate_confirm_action": "重新生成",
     "rotating": "重新生成中…",
@@ -887,7 +889,9 @@
     "gongfeng_retry": "重新同步",
     "gongfeng_remove": "停止同步",
     "gongfeng_archived": "已归档",
-    "gongfeng_cleanup_warning": "已断开连接，部分工蜂 Webhook 未能清理，请在工蜂中手动删除。{{error}}"
+    "gongfeng_cleanup_warning": "已断开连接，部分工蜂 Webhook 未能清理，请在工蜂中手动删除。{{error}}",
+    "gongfeng_browse_failed": "无法浏览工蜂仓库，已选仓库仍可管理。{{error}}",
+    "gongfeng_retry_browse": "重试浏览"
   },
   "lark": {
     "section_title": "飞书",

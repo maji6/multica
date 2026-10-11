@@ -12,14 +12,15 @@ test("Gongfeng repository selection, historical MR, CI and merge automation", as
   let title = "", identifier = "", state = "opened", sha = "deadbeef", updated = "2026-10-09T08:00:00+0000";
   let hook: { id: number; url: string; token: string } | undefined;
   let validationCalls = 0, hookPosts = 0, checksPassed = false;
-  let denyChecks = false, deniedChecks = 0;
+  let denyChecks = false, deniedChecks = 0, revoked = false;
+  let webhookSecret = "";
   const project = { id: 55, path_with_namespace: "acme/team/widget", web_url: "https://git.code.tencent.com/acme/team/widget", ssh_url_to_repo: "git@git.code.tencent.com:acme/team/widget.git", default_branch: "main", description: "Widget" };
   const mr = () => ({ id: 901, iid: 7, title, description: `Closes ${identifier}`, state, sha, source_branch: "feature/login", source_project_id: 55, created_at: "2026-10-09T07:00:00+0000", updated_at: updated, merge_status: "can_be_merged", author: { username: "alice" } });
   const provider = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://mock");
     const path = decodeURIComponent(url.pathname);
     const send = (body: unknown) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };
-    if (req.headers["private-token"] !== "test-private-token") { res.writeHead(401); res.end(); return; }
+    if (revoked || req.headers["private-token"] !== "test-private-token") { res.writeHead(401); res.end(); return; }
     if (path === "/api/v3/user") { validationCalls++; send({ username: "alice" }); }
     else if (path === "/api/v3/projects") send([project]);
     else if (path === "/api/v3/projects/55" || path === "/api/v3/projects/acme/team/widget") send(project);
@@ -28,6 +29,10 @@ test("Gongfeng repository selection, historical MR, CI and merge automation", as
       let body = ""; for await (const chunk of req) body += chunk;
       const input = JSON.parse(body); expect(input.merge_requests_events).toBe(true); expect(input.enable_ssl_verification).toBe(true);
       hook = { id: 9, url: input.url, token: input.token }; hookPosts++; send(hook);
+    } else if (path === "/api/v3/projects/55/hooks/9" && req.method === "PUT") {
+      let body = ""; for await (const chunk of req) body += chunk;
+      const input = JSON.parse(body);
+      hook = { id: 9, url: input.url, token: input.token }; send(hook);
     } else if (path === "/api/v3/projects/55/hooks/9" && req.method === "GET") send(hook);
     else if (path === "/api/v3/projects/55/hooks/9" && req.method === "DELETE") { hook = undefined; res.writeHead(204); res.end(); }
     else if (path === "/api/v3/projects/55/merge_requests") send([mr()]);
@@ -65,7 +70,7 @@ test("Gongfeng repository selection, historical MR, CI and merge automation", as
     await form.getByLabel("Access token", { exact: true }).fill("test-private-token");
     const connected = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith(`/api/workspaces/${workspace.id}/vcs/connections`));
     await form.getByRole("button", { name: "Connect", exact: true }).click();
-    const response = await connected, connection = await response.json(); connectionId = connection.id;
+    const response = await connected, connection = await response.json(); connectionId = connection.id; webhookSecret = connection.webhook_secret;
     expect(response.status()).toBe(200); expect(validationCalls).toBe(1);
     const picker = page.getByRole("dialog", { name: "Gongfeng repositories" });
     await picker.getByRole("checkbox", { name: "acme/team/widget" }).click();
@@ -75,6 +80,17 @@ test("Gongfeng repository selection, historical MR, CI and merge automation", as
     expect(hookPosts).toBe(1); expect(hook?.token).toBe(connection.webhook_secret);
     await expect(picker.getByText("Webhook configured", { exact: true })).toBeVisible({ timeout: 20_000 });
     await page.screenshot({ path: testInfo.outputPath("gongfeng-repositories.png"), fullPage: true });
+    await picker.getByRole("button", { name: "I've saved it" }).click();
+    await page.getByRole("button", { name: `Actions for http://127.0.0.1:${address.port}` }).click();
+    await page.getByRole("menuitem", { name: "Regenerate webhook" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Regenerate", exact: true }).click();
+    const rotated = page.getByRole("dialog", { name: "Webhook secret regenerated", exact: true });
+    await expect(rotated.getByText(/updating webhooks for selected repositories automatically/)).toBeVisible();
+    webhookSecret = await rotated.getByLabel("Webhook secret", { exact: true }).inputValue();
+    expect(webhookSecret).not.toBe(connection.webhook_secret);
+    await expect.poll(() => hook?.token).toBe(webhookSecret);
+    expect(hookPosts).toBe(1);
+    await rotated.getByRole("button", { name: "Gongfeng repositories", exact: true }).click();
     await picker.getByRole("button", { name: "I've saved it" }).click();
     await page.getByRole("button", { name: "Add repository" }).click();
     await page.getByRole("menuitem", { name: "Choose from Gongfeng" }).click();
@@ -103,7 +119,7 @@ test("Gongfeng repository selection, historical MR, CI and merge automation", as
     const send = async () => {
       // Stub deliveries stay local even when the server advertises a public webhook URL.
       const apiBase = process.env.NEXT_PUBLIC_API_URL || `http://localhost:${process.env.PORT || "8080"}`;
-      const delivered = await request.post(`${apiBase}/api/webhooks/vcs/${connectionId}`, { headers: { "X-Event": "Merge Request Hook", "X-Token": connection.webhook_secret }, data: payload });
+      const delivered = await request.post(`${apiBase}/api/webhooks/vcs/${connectionId}`, { headers: { "X-Event": "Merge Request Hook", "X-Token": webhookSecret }, data: payload });
       expect(delivered.status()).toBe(202);
     };
     // A failing new-head refresh publishes a realtime update. Keep the page
@@ -135,11 +151,30 @@ test("Gongfeng repository selection, historical MR, CI and merge automation", as
     await expect.poll(async () => (await api.getIssuePullRequests(issue.id)).pull_requests[0]?.checks_rollup).toBe("success");
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.getByText("Checks passed", { exact: true })).toBeVisible();
+    // Losing remote credentials must not prevent stopping local synchronization.
+    revoked = true;
+    await page.goto(`/${workspace.slug}/settings?tab=code`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: `Actions for http://127.0.0.1:${address.port}` }).click();
+    await page.getByRole("menuitem", { name: "Gongfeng repositories" }).click();
+    const stopPicker = page.getByRole("dialog", { name: "Gongfeng repositories" });
+    await expect(stopPicker.getByRole("alert")).toBeVisible();
+    await stopPicker.getByRole("button", { name: "Stop syncing: acme/team/widget" }).click();
+    await expect(stopPicker.getByRole("button", { name: "Stop syncing: acme/team/widget" })).toHaveCount(0);
+    await expect(page.getByText(/Repository stopped, but its Gongfeng webhook could not be removed/)).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("gongfeng-revoked-stop.png"), fullPage: true });
     state = "merged"; updated = "2026-10-09T08:10:00+0000";
     attrs.action = "merge"; attrs.state = state; attrs.updated_at = updated; payload.user.username = "bob";
     await send();
+    expect((await api.getIssue(issue.id)).status).toBe("in_progress");
+    expect((await api.getIssuePullRequests(issue.id)).pull_requests[0]?.state).toBe("open");
+    // Explicitly enabling sync again imports the final merged state.
+    revoked = false;
+    await stopPicker.getByRole("button", { name: "Retry browsing" }).click();
+    await stopPicker.getByRole("checkbox", { name: "acme/team/widget" }).click();
+    await stopPicker.getByRole("button", { name: "Enable sync" }).click();
     await expect.poll(async () => (await api.getIssue(issue.id)).status).toBe("done");
-    await page.reload({ waitUntil: "domcontentloaded" });
+    await stopPicker.getByRole("button", { name: "I've saved it" }).click();
+    await page.goto(`/${workspace.slug}/issues/${issue.identifier}`, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("link", { name: /#7/ })).toBeVisible();
     await expect(page.getByRole("button", { name: "Done", exact: true }).first()).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("gongfeng-merged.png"), fullPage: true });
