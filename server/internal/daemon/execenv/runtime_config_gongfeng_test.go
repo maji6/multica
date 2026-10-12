@@ -15,7 +15,7 @@ func TestGongfengRepositoryGuidance(t *testing.T) {
 			out := buildMetaSkillContent("claude", TaskContextForEnv{
 				Repos: []RepoContextForEnv{{URL: remote, Ref: "release/b"}},
 			})
-			for _, want := range []string{"--target-branch <that-branch>", "gongfeng --project-id", "global MR `id`", "connection token is not passed"} {
+			for _, want := range []string{"--target-branch <that-branch>", "gongfeng --project-id", "--base-url https://git.code.tencent.com", "user me --json", "does not switch the CLI account", "global MR `id`", "connection token is not passed"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("guidance missing %q", want)
 				}

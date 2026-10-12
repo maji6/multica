@@ -107,15 +107,48 @@ The repository picker shows sync progress and permission errors. **Retry sync** 
 MR creation, update, close, reopen and merge reuse the linking and issue-status rules above. Cards display the repository-local `iid`; API detail requests resolve the global `id` separately. API refreshes fill in the author and recover missed events. CI checks and conflict information refresh on MR events, page visits and periodic background sweeps. Checks belong to the current source commit, including fork branches; changing the commit invalidates old checks. Failed refreshes mark last-known results as stale. Missing merge-policy or approval information is not inferred from conflict status.
 
 For agents, install the community [gongfeng-cli](https://github.com/studyzy/gongfeng-cli)
-on the runtime host and configure `GONGFENG_TOKEN` separately from Git credentials.
-A reproducible source install uses the reviewed revision:
+on the runtime host and configure CLI authentication separately from Git credentials.
+The official Multica CLI `v0.6.1` works with this integration: the server delivers
+the Gongfeng reference in the `multica-platform` task skill bundle, so a custom
+runtime build is not required. Real task execution with Codex on an Apple silicon
+Mac covered MR creation and updates, check synchronization, and issue completion
+after merge. Windows and other agent providers still require native acceptance.
+Download `v0.5.0` from the original project's [Releases](https://github.com/studyzy/gongfeng-cli/releases/tag/v0.5.0).
+Prebuilt packages are available for macOS arm64, Linux x86_64 and Windows x86_64;
+Go is not required for these packages. With Go installed, use the same pinned version:
 
 ```sh
-go install github.com/studyzy/gongfeng-cli/cmd/gongfeng@09d82bd94210ab0e8a8481cf8d00b9b988ea024d
+go install github.com/studyzy/gongfeng-cli/cmd/gongfeng@v0.5.0
 ```
 
-Use `gongfeng --project-id <namespace/project> mr create --help` to check flags,
+Authenticate with `GONGFENG_TOKEN` or a private `~/.gongfeng.json` file (the token
+is stored in plaintext; use mode `0600` on macOS/Linux or a personal file ACL on
+Windows). Some agents filter environment variables;
+confirm access inside the actual runtime. Keep tokens out of command arguments,
+repository files and task comments. Repository-local configuration can override
+the API address and credentials. Pass the official `--base-url` explicitly and
+verify the account before writes:
+
+```sh
+gongfeng --base-url https://git.code.tencent.com user me --json
+gongfeng --base-url https://git.code.tencent.com --project-id <namespace/project> mr list --json
+```
+
+The explicit address does not restrict HTTP redirects. The community CLI's
+credential loading and redirect handling need separate hardening before using
+it with untrusted repositories.
+
+Use `gongfeng --base-url https://git.code.tencent.com --project-id <namespace/project> mr create --help` to check flags,
 then specify `--source-branch`, `--target-branch`, `--title` and `--description`.
 The CLI's `show`, `update` and `accept` commands use the global MR `id`; resolve
 it with `mr list --json` instead of passing the displayed `iid`. The server's
 stored token is not passed to agents.
+
+MR actions use the CLI account on the runtime host. Multica does not switch to
+the task creator's account, and separate Multica profiles under the same OS
+account share CLI credentials. For personal attribution, each member needs an
+isolated personal runtime and credentials. Git commit authors and SSH push
+identities are configured separately.
+
+Multica reads check results; it does not run repository tests. For ongoing
+checks, configure a CI runner to report against the current source commit SHA.
