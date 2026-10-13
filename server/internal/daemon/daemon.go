@@ -9392,6 +9392,21 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		taskLog.Debug("backend execute returned error", "error", err)
 		return agent.Result{}, 0, err
 	}
+	// A cancelled drain context can win before the provider reaps its process.
+	// Keep the claim proof fenced until both the result and transcript drain
+	// have arrived, including providers without TerminalObserved (e.g. Codex).
+	exitClaim := executionExitClaimForTask(ctx, taskID)
+	processExited, transcriptDrained := false, false
+	if exitClaim != nil {
+		exitClaim.unconfirmed.Store(true)
+		defer func() {
+			confirmed := processExited && transcriptDrained
+			exitClaim.unconfirmed.Store(!confirmed)
+			if !confirmed {
+				taskLog.Warn("withholding execution exit proof: provider cleanup or transcript drain was not confirmed")
+			}
+		}()
+	}
 	// This counter intentionally starts at the narrower provider-session
 	// boundary, not at the earlier server-side StartTask transition.
 	d.runningTasks.Add(1)
@@ -9782,10 +9797,12 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	waitForDrain := func() {
 		select {
 		case <-drainFinished:
+			transcriptDrained = true
 		case <-time.After(10 * time.Second):
 			drainCancel()
 			select {
 			case <-drainFinished:
+				transcriptDrained = true
 			case <-time.After(12 * time.Second):
 				taskLog.Warn("transcript drain did not stop after cancel; completing anyway")
 			}
@@ -9800,7 +9817,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	// caller for re-tagging; ordinary upstream cancellation deliberately ignores
 	// it and keeps the existing generic cancelled disposition.
 	awaitTerminalResult := func(trigger string) (result agent.Result, delivered, authoritative bool) {
-		if !handsOverTerminal {
+		if !handsOverTerminal && exitClaim == nil {
 			return agent.Result{}, false, false
 		}
 		if trigger == "idle_watchdog" {
@@ -9820,6 +9837,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 			if !ok {
 				return agent.Result{}, false, false
 			}
+			processExited = true
 			return result, true, terminalObserved()
 		case <-timer.C:
 			if trigger == "idle_watchdog" {
@@ -9835,7 +9853,8 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	}
 
 	select {
-	case result := <-session.Result:
+	case result, ok := <-session.Result:
+		processExited = ok
 		stopWatchdog()
 		waitForDrain()
 		// terminalObserved outranks a watchdog that fired anyway: if the backend

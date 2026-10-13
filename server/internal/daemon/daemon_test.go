@@ -6811,3 +6811,65 @@ func TestHermesProfileChainCoversLaunchPrefix(t *testing.T) {
 		t.Errorf("custom = %v, want only the selector's value removed", strippedCustom)
 	}
 }
+
+// Simulates a provider whose process cleanup finishes after cancellation has
+// closed the transcript. It deliberately has no TerminalObserved hook.
+type delayedExecutionExitBackend struct {
+	cancelled  chan struct{}
+	release    chan struct{}
+	omitResult bool
+}
+
+func (b delayedExecutionExitBackend) Execute(ctx context.Context, _ string, _ agent.ExecOptions) (*agent.Session, error) {
+	messages := make(chan agent.Message)
+	result := make(chan agent.Result, 1)
+	go func() {
+		<-ctx.Done()
+		close(messages)
+		close(b.cancelled)
+		<-b.release
+		if !b.omitResult {
+			result <- agent.Result{Status: "aborted"}
+		}
+		close(result)
+	}()
+	return &agent.Session{Messages: messages, Result: result}, nil
+}
+func TestExecutionExitProofWaitsForProviderCleanupAfterCancellation(t *testing.T) {
+	for _, omitResult := range []bool{false, true} {
+		t.Run(fmt.Sprint("missing_result=", omitResult), func(t *testing.T) {
+			backend := delayedExecutionExitBackend{cancelled: make(chan struct{}), release: make(chan struct{}), omitResult: omitResult}
+			ctx, cancel := context.WithCancel(withExecutionExitProof(context.Background(), "exit-drain", "proof"))
+			defer cancel()
+			d := newTestDaemon(t)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, _, _ = d.executeAndDrain(ctx, backend, "", agent.ExecOptions{}, slog.Default(), "exit-drain", "", new(atomic.Int32))
+			}()
+			cancel()
+			<-backend.cancelled
+			select {
+			case <-done:
+				t.Fatal("daemon returned before provider process cleanup")
+			case <-time.After(30 * time.Millisecond):
+			}
+			if executionExitProofForTask(ctx, "exit-drain") != "" {
+				t.Fatal("proof usable while process cleanup is pending")
+			}
+			close(backend.release)
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("daemon did not finish after cleanup")
+			}
+			proof := executionExitProofForTask(ctx, "exit-drain")
+			if omitResult && proof != "" {
+				t.Fatal("closed result channel without a result claimed process exit")
+			}
+			if !omitResult && proof != "proof" {
+				t.Fatal("confirmed cleanup did not release exit proof")
+			}
+		})
+	}
+}
