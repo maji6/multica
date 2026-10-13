@@ -1,13 +1,87 @@
 package handler
 
 import (
-	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/testutil"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/testutil"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestExecutionExitUserAuthenticatedClaimRoundTrip(t *testing.T) {
+	for _, mode := range []string{"single", "batch"} {
+		t.Run(mode, func(t *testing.T) {
+			runtimeID := createClaimReclaimRuntime(t, t.Context(), "Exit proof runtime")
+			dbfx.Exec(t, "UPDATE agent_runtime SET daemon_id=$1 WHERE id=$2", batchClaimTestDaemonID, runtimeID)
+			agentID, issueID := createClaimReclaimAgentAndIssue(t, t.Context(), runtimeID, "Exit proof agent")
+			taskID := seedQueuedIssueTask(t, t.Context(), agentID, runtimeID, issueID)
+			var claimed struct {
+				Task  map[string]json.RawMessage   `json:"task"`
+				Tasks []map[string]json.RawMessage `json:"tasks"`
+			}
+			if mode == "single" {
+				req := withURLParam(newRequest(http.MethodPost, "/claim", map[string]any{}), "runtimeId", runtimeID)
+				testutil.Call(t, testHandler.ClaimTaskByRuntime, req).Want(http.StatusOK).JSON(&claimed)
+			} else {
+				req := newRequest(http.MethodPost, "/claim", map[string]any{"daemon_id": batchClaimTestDaemonID, "runtime_ids": []string{runtimeID}, "max_tasks": 1})
+				testutil.Call(t, testHandler.ClaimTasksByRuntime, req).Want(http.StatusOK).JSON(&claimed)
+				if len(claimed.Tasks) != 1 {
+					t.Fatalf("claimed %d tasks", len(claimed.Tasks))
+				}
+				claimed.Task = claimed.Tasks[0]
+			}
+			var proof string
+			_ = json.Unmarshal(claimed.Task["execution_exit_proof"], &proof)
+			if proof == "" {
+				t.Fatal("user-authenticated claim did not provide an execution exit proof")
+			}
+			dbfx.Exec(t, "UPDATE agent_task_queue SET status='running', started_at=now() WHERE id=$1", taskID)
+			cancel := withChatTestWorkspaceCtx(t, withURLParam(newRequest(http.MethodPost, "/cancel", nil), "taskId", taskID))
+			var response AgentTaskResponse
+			testutil.Call(t, testHandler.CancelTaskByUser, cancel).Want(http.StatusOK).JSON(&response)
+			if response.ExecutionExitedAt != nil {
+				t.Fatal("cancellation alone asserted execution exit")
+			}
+			ack := func(value string, status int) {
+				req := withURLParam(newRequest(http.MethodPost, "/cancel-ack", map[string]any{}), "taskId", taskID)
+				req.Header.Set("X-Multica-Execution-Exit-Proof", value)
+				testutil.Call(t, testHandler.AckTaskCancelled, req).Want(status)
+			}
+			ack(proof+"tampered", http.StatusForbidden)
+			ack(proof, http.StatusOK)
+			task, err := testHandler.Queries.GetAgentTask(t.Context(), parseUUID(taskID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			first := taskToResponse(task, testWorkspaceID).ExecutionExitedAt
+			if first == nil {
+				t.Fatal("valid claim proof did not record exit")
+			}
+			ack(proof, http.StatusOK)
+			task, err = testHandler.Queries.GetAgentTask(t.Context(), parseUUID(taskID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if receipt := taskToResponse(task, testWorkspaceID).ExecutionExitedAt; receipt == nil || *receipt != *first {
+				t.Fatal("replayed exit proof changed receipt")
+			}
+			if dbfx.Count(t, "SELECT count(*) FROM task_token WHERE task_id=$1", taskID) != 0 {
+				t.Fatal("execution exit left agent credentials active")
+			}
+			body, _ := json.Marshal(taskToResponse(task, testWorkspaceID))
+			var public map[string]json.RawMessage
+			_ = json.Unmarshal(body, &public)
+			if _, ok := public["execution_exit_proof"]; ok {
+				t.Fatal("claim proof leaked through public task response")
+			}
+		})
+	}
+}
 
 func TestExecutionExitReceiptRequiresDaemonAndRevokesTokens(t *testing.T) {
 	f := newSupplementFixture(t, "codex", "running", true)
@@ -88,5 +162,67 @@ func TestExecutionExitRecordedOnDaemonCompletionAndFailure(t *testing.T) {
 				t.Fatal("terminal daemon callback did not record exit")
 			}
 		})
+	}
+}
+
+func TestExecutionExitProofBindsDispatch(t *testing.T) {
+	f := newSupplementFixture(t, "codex", "running", true)
+	dbfx.Exec(t, "UPDATE agent_runtime SET daemon_id='exit-owner' WHERE id=$1", f.runtimeID)
+	dbfx.Exec(t, "UPDATE agent_task_queue SET dispatched_at=now(), status='cancelled' WHERE id=$1", f.taskID)
+	task, err := testHandler.Queries.GetAgentTask(t.Context(), parseUUID(f.taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := testHandler.Queries.GetAgentRuntime(t.Context(), task.RuntimeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof := executionExitProof(task, runtime)
+	if proof == "" {
+		t.Fatal("missing proof")
+	}
+	for _, mutate := range []func(*db.AgentTaskQueue, *db.AgentRuntime){
+		func(task *db.AgentTaskQueue, _ *db.AgentRuntime) {
+			task.ID = parseUUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+		},
+		func(task *db.AgentTaskQueue, _ *db.AgentRuntime) {
+			task.DispatchedAt.Time = task.DispatchedAt.Time.Add(time.Second)
+		},
+		func(_ *db.AgentTaskQueue, rt *db.AgentRuntime) { rt.DaemonID.String = "another-owner" },
+		func(_ *db.AgentTaskQueue, rt *db.AgentRuntime) {
+			rt.WorkspaceID = parseUUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+		},
+		func(task *db.AgentTaskQueue, _ *db.AgentRuntime) {
+			task.RuntimeID = parseUUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+		},
+	} {
+		changed, rt := task, runtime
+		mutate(&changed, &rt)
+		if executionExitProof(changed, rt) == proof {
+			t.Fatal("proof is reusable outside its dispatch")
+		}
+	}
+	_, err = testHandler.Queries.CreateTaskToken(t.Context(), db.CreateTaskTokenParams{TokenHash: "exit-fence-" + f.taskID, TaskID: task.ID, AgentID: parseUUID(f.agentID), WorkspaceID: parseUUID(testWorkspaceID), UserID: parseUUID(testUserID), ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbfx.Cleanup(t, "DELETE FROM task_token WHERE task_id=$1", f.taskID)
+	dbfx.Exec(t, "UPDATE agent_task_queue SET dispatched_at=dispatched_at+interval '1 second' WHERE id=$1", f.taskID)
+	req := withURLParam(newRequest(http.MethodPost, "/cancel-ack", nil), "taskId", f.taskID)
+	req.Header.Set(executionExitProofHeader, proof)
+	testutil.Call(t, testHandler.AckTaskCancelled, req).Want(http.StatusForbidden)
+	_, err = testHandler.Queries.RecordAgentTaskExecutionExit(t.Context(), db.RecordAgentTaskExecutionExitParams{ID: task.ID, RuntimeID: task.RuntimeID, DispatchedAt: task.DispatchedAt})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale dispatch update: %v", err)
+	}
+	if dbfx.Count(t, "SELECT count(*) FROM task_token WHERE task_id=$1", f.taskID) != 1 {
+		t.Fatal("stale callback revoked the current execution credential")
+	}
+	current, err := testHandler.Queries.GetAgentTask(t.Context(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if taskToResponse(current, testWorkspaceID).ExecutionExitedAt != nil {
+		t.Fatal("stale dispatch recorded exit")
 	}
 }

@@ -240,6 +240,7 @@ type terminalTaskReportKind uint8
 const (
 	terminalTaskReportComplete terminalTaskReportKind = iota + 1
 	terminalTaskReportFail
+	terminalTaskReportCancel
 
 	// CompleteTask and FailTask can make six 30-second HTTP attempts around
 	// the five backoffs in defaultTerminalRetrySchedule (124 seconds total).
@@ -255,15 +256,16 @@ const (
 // reportTerminalTask gives the durable outbox one insertion point without
 // revisiting every task exit when it is added.
 type terminalTaskReport struct {
-	kind           terminalTaskReportKind
-	taskID         string
-	output         string
-	branchName     string
-	errorMessage   string
-	sessionID      string
-	workDir        string
-	durableWorkDir string
-	failureReason  string
+	executionExitProof string
+	kind               terminalTaskReportKind
+	taskID             string
+	output             string
+	branchName         string
+	errorMessage       string
+	sessionID          string
+	workDir            string
+	durableWorkDir     string
+	failureReason      string
 	// sessionRolloutMissing is true when the daemon withheld this task's Codex
 	// session because its rollout was not in the store (MUL-5305). The server
 	// clears the resume pointer and flags the continuity gap for the next claim.
@@ -5762,6 +5764,7 @@ func (d *Daemon) watchTaskCancellation(ctx context.Context, taskID string, pollI
 }
 
 func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
+	ctx = withExecutionExitProof(ctx, task.ID, task.ExecutionExitProof)
 	d.mu.Lock()
 	rt, tracked := d.runtimeIndex[task.RuntimeID]
 	d.mu.Unlock()
@@ -5925,8 +5928,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 			ack.ErrorMessage = preserved.Error()
 			ack.FailureReason = "local_directory_error"
 		}
-		if ackErr := d.client.AckTaskCancelled(ctx, task.ID, ack); ackErr != nil {
-			taskLog.Warn("cancel ack failed; server sweeper will finalize", "error", ackErr)
+		if ackErr := d.reportTerminalTask(ctx, terminalTaskReport{kind: terminalTaskReportCancel, taskID: task.ID, branchName: ack.BranchName, durableWorkDir: ack.DurableWorkDir, errorMessage: ack.ErrorMessage, failureReason: ack.FailureReason}); ackErr != nil {
+			taskLog.Warn("cancel ack delivery failed", "error", ackErr)
 		}
 		return
 	default:
@@ -5974,8 +5977,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		// completed/failed rows the complete/fail callback is the
 		// authoritative channel and a stale run's late ack must not touch
 		// them.
-		if ackErr := d.client.AckTaskCancelled(ctx, task.ID, TaskCancelAck{BranchName: result.BranchName, DurableWorkDir: result.DurableWorkDir}); ackErr != nil {
-			taskLog.Warn("cancel ack failed; server sweeper will finalize", "error", ackErr)
+		if ackErr := d.reportTerminalTask(ctx, terminalTaskReport{kind: terminalTaskReportCancel, taskID: task.ID, branchName: result.BranchName, durableWorkDir: result.DurableWorkDir}); ackErr != nil {
+			taskLog.Warn("cancel ack delivery failed", "error", ackErr)
 		}
 		return
 	}
@@ -6372,6 +6375,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 // 30-second drain, but terminal callbacks must still use that remaining window.
 // The explicit timeout keeps this detached work bounded during normal runs.
 func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTaskReport) error {
+	report.executionExitProof = executionExitProofForTask(parentCtx, report.taskID)
 	if _, err := persistedTerminalReport(report, time.Now()); err != nil {
 		return err
 	}
@@ -6448,10 +6452,13 @@ func (d *Daemon) terminalReportClock() time.Time {
 }
 
 func (d *Daemon) sendTerminalTaskReport(ctx context.Context, report terminalTaskReport, schedule []time.Duration) error {
+	ctx = withExecutionExitProof(ctx, report.taskID, report.executionExitProof)
 	if d.terminalReportSend != nil {
 		return d.terminalReportSend(ctx, report, schedule)
 	}
 	switch report.kind {
+	case terminalTaskReportCancel:
+		return d.client.ackTaskCancelledWithRetrySchedule(ctx, report.taskID, TaskCancelAck{BranchName: report.branchName, DurableWorkDir: report.durableWorkDir, ErrorMessage: report.errorMessage, FailureReason: report.failureReason}, schedule)
 	case terminalTaskReportComplete:
 		return d.client.completeTaskWithRetrySchedule(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, schedule)
 	case terminalTaskReportFail:

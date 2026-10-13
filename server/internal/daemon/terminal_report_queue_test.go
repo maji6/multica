@@ -593,3 +593,68 @@ func TestRunBatchPollerReleasesSlotAfterTerminalRetryExhaustion(t *testing.T) {
 		t.Fatalf("pending reports = %+v, want only exhausted task t1", items)
 	}
 }
+
+func TestTerminalCancelProofSurvivesRestartAndHTTPReplay(t *testing.T) {
+	const proof = "claim-specific-proof"
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path != "/api/daemon/tasks/task-cancel/cancel-ack" {
+			t.Errorf("unexpected request path: %s", r.URL.Path)
+		}
+		if r.Header.Get("X-Multica-Execution-Exit-Proof") != proof {
+			t.Error("replay lost execution exit proof")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body["branch_name"] != "agent/preserved" {
+			t.Error("replay lost branch")
+		}
+		if _, ok := body["execution_exit_proof"]; ok {
+			t.Error("proof leaked into result body")
+		}
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer server.Close()
+	cfg := Config{ServerBaseURL: server.URL, WorkspacesRoot: t.TempDir(), DaemonID: "cancel-restart"}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	before := New(cfg, logger)
+	before.terminalReportSend = func(context.Context, terminalTaskReport, []time.Duration) error { return errors.New("offline") }
+	ctx, cancel := context.WithCancel(withExecutionExitProof(context.Background(), "task-cancel", proof))
+	cancel()
+	if err := before.reportTerminalTask(ctx, terminalTaskReport{kind: terminalTaskReportCancel, taskID: "task-cancel", branchName: "agent/preserved"}); err == nil {
+		t.Fatal("expected offline failure")
+	}
+	after := New(cfg, logger)
+	pending, delivered := after.replayPendingTerminalReports(context.Background())
+	if pending != 0 || delivered != 1 || calls.Load() != 1 {
+		t.Fatalf("replay pending=%d delivered=%d calls=%d", pending, delivered, calls.Load())
+	}
+	_, delivered = after.replayPendingTerminalReports(context.Background())
+	if delivered != 0 || calls.Load() != 1 {
+		t.Fatal("acknowledged cancellation replayed again")
+	}
+}
+
+func TestExecutionExitProofOnlyTravelsWithMatchingTerminalRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expected := ""
+		if r.URL.Path == "/api/daemon/tasks/owned/complete" || r.URL.Path == "/api/daemon/tasks/owned/fail" || r.URL.Path == "/api/daemon/tasks/owned/cancel-ack" {
+			expected = "private-proof"
+		}
+		if r.Header.Get("X-Multica-Execution-Exit-Proof") != expected {
+			t.Errorf("proof exposure mismatch for %s", r.URL.Path)
+		}
+		w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	ctx := withExecutionExitProof(context.Background(), "owned", "private-proof")
+	for _, path := range []string{"/api/daemon/tasks/owned/complete", "/api/daemon/tasks/owned/fail", "/api/daemon/tasks/owned/cancel-ack", "/api/daemon/tasks/owned/progress", "/api/daemon/tasks/other/cancel-ack"} {
+		if err := client.postJSON(ctx, path, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

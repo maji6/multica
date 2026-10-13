@@ -568,6 +568,10 @@ type TaskCancelAck struct {
 // the cancelled task's work — and a single lost POST would lose it forever.
 // The server never overwrites already-recorded values, so replays are safe.
 func (c *Client) AckTaskCancelled(ctx context.Context, taskID string, ack TaskCancelAck) error {
+	return c.ackTaskCancelledWithRetrySchedule(ctx, taskID, ack, defaultTerminalRetrySchedule)
+}
+
+func (c *Client) ackTaskCancelledWithRetrySchedule(ctx context.Context, taskID string, ack TaskCancelAck, schedule []time.Duration) error {
 	body := map[string]any{}
 	if ack.BranchName != "" {
 		body["branch_name"] = ack.BranchName
@@ -581,7 +585,7 @@ func (c *Client) AckTaskCancelled(ctx context.Context, taskID string, ack TaskCa
 	if ack.FailureReason != "" {
 		body["failure_reason"] = ack.FailureReason
 	}
-	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/cancel-ack", taskID), body, nil, defaultTerminalRetrySchedule)
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/cancel-ack", taskID), body, nil, schedule)
 }
 
 func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, step, total int) error {
@@ -1295,6 +1299,9 @@ func (c *Client) postJSONViaObserved(ctx context.Context, httpClient *http.Clien
 	}
 	c.setIdentityHeaders(req)
 
+	if proof := executionExitProofForPath(ctx, path); proof != "" {
+		req.Header.Set("X-Multica-Execution-Exit-Proof", proof)
+	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err

@@ -358,6 +358,7 @@ type TaskCancellationActor struct {
 }
 
 type AgentTaskResponse struct {
+	ExecutionExitProof       string                 `json:"execution_exit_proof,omitempty"`
 	ExecutionExitedAt        *string                `json:"execution_exited_at,omitempty"`
 	StartClaimSupported      bool                   `json:"start_claim_supported,omitempty"`
 	CancelledByCommentChange bool                   `json:"cancelled_by_comment_change,omitempty"`

@@ -6436,6 +6436,9 @@ func TestHandleTask_AcksCancelAfterPollCancelled(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/cancel-ack"):
 			recordCall("cancel-ack")
+			if r.Header.Get("X-Multica-Execution-Exit-Proof") != "poll-exit-proof" {
+				t.Error("cancellation lost claim proof")
+			}
 			w.WriteHeader(http.StatusOK)
 		case strings.HasSuffix(r.URL.Path, "/status"):
 			if statusCallCount.Add(1) == 1 {
@@ -6464,14 +6467,16 @@ func TestHandleTask_AcksCancelAfterPollCancelled(t *testing.T) {
 
 	d.runner = taskRunnerFunc(func(runCtx context.Context, _ Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
 		<-runCtx.Done()
+		recordCall("process-drained")
 		return TaskResult{Status: "aborted"}, nil
 	})
 
 	task := Task{
-		ID:        "task-ack-poll",
-		RuntimeID: "rt-1",
-		IssueID:   "issue-ack-poll",
-		Agent:     &AgentData{Name: "test-agent"},
+		ID:                 "task-ack-poll",
+		ExecutionExitProof: "poll-exit-proof",
+		RuntimeID:          "rt-1",
+		IssueID:            "issue-ack-poll",
+		Agent:              &AgentData{Name: "test-agent"},
 	}
 
 	d.handleTask(context.Background(), task, 0)
@@ -6481,11 +6486,13 @@ func TestHandleTask_AcksCancelAfterPollCancelled(t *testing.T) {
 	copy(order, callOrder)
 	mu.Unlock()
 
-	pollStatusIdx, ackIdx := -1, -1
+	pollStatusIdx, ackIdx, drainedIdx := -1, -1, -1
 	for i, name := range order {
 		switch name {
 		case "poll-status":
 			pollStatusIdx = i
+		case "process-drained":
+			drainedIdx = i
 		case "cancel-ack":
 			ackIdx = i
 		}
@@ -6495,6 +6502,9 @@ func TestHandleTask_AcksCancelAfterPollCancelled(t *testing.T) {
 	}
 	if ackIdx == -1 {
 		t.Fatalf("cancel-ack was never posted on the poll-cancelled path (order: %v)", order)
+	}
+	if drainedIdx < 0 || ackIdx < drainedIdx {
+		t.Fatalf("cancel acknowledgement preceded drain: %v", order)
 	}
 	if ackIdx < pollStatusIdx {
 		t.Fatalf("cancel-ack before the poll observed the cancellation (order: %v)", order)

@@ -32,17 +32,16 @@ const (
 )
 
 // persistedTerminalTaskReport is the versioned on-disk form of one terminal
-// callback. It deliberately contains no auth token: replay always uses the
-// daemon's current credential, while the potentially sensitive agent output is
-// protected by owner-only modes on Unix. On Windows Go's mode bits are not an
-// ACL boundary, so protection comes from the current user's profile/workspace
-// ACL; the queue never carries an auth token on either platform.
+// callback. Replay uses the daemon's current account credential, which is never
+// stored here. The claim-specific exit proof and agent output are protected by
+// owner-only modes on Unix and the user's profile/workspace ACL on Windows.
 //
 // Version stays at 1 because the rejection fields are additive and older
 // daemons ignore unknown JSON fields. A future incompatible version is left
 // untouched and reported on every replay pass; downgrading must never delete a
 // payload merely because the older binary cannot decode it.
 type persistedTerminalTaskReport struct {
+	ExecutionExitProof    string    `json:"execution_exit_proof,omitempty"`
 	Version               int       `json:"version"`
 	CreatedAt             time.Time `json:"created_at"`
 	Kind                  string    `json:"kind"`
@@ -119,6 +118,8 @@ func terminalReportKindName(kind terminalTaskReportKind) (string, error) {
 		return "complete", nil
 	case terminalTaskReportFail:
 		return "fail", nil
+	case terminalTaskReportCancel:
+		return "cancel-ack", nil
 	default:
 		return "", fmt.Errorf("unsupported terminal task report kind %d", kind)
 	}
@@ -133,6 +134,7 @@ func persistedTerminalReport(report terminalTaskReport, createdAt time.Time) (pe
 		return persistedTerminalTaskReport{}, err
 	}
 	return persistedTerminalTaskReport{
+		ExecutionExitProof:    report.executionExitProof,
 		Version:               terminalReportRecordVersion,
 		CreatedAt:             createdAt.UTC(),
 		Kind:                  kind,
@@ -162,10 +164,13 @@ func (record persistedTerminalTaskReport) terminalReport() (terminalTaskReport, 
 		kind = terminalTaskReportComplete
 	case "fail":
 		kind = terminalTaskReportFail
+	case "cancel-ack":
+		kind = terminalTaskReportCancel
 	default:
 		return terminalTaskReport{}, fmt.Errorf("unsupported terminal report kind %q", record.Kind)
 	}
 	return terminalTaskReport{
+		executionExitProof:    record.ExecutionExitProof,
 		kind:                  kind,
 		taskID:                record.TaskID,
 		output:                record.Output,
@@ -669,6 +674,7 @@ func (d *Daemon) handleTerminalReportDeliveryError(ctx context.Context, item pen
 	// task-not-found response needs no compensation because no row remains.
 	if item.report.kind == terminalTaskReportComplete && !isTaskNotFoundError(deliveryErr) {
 		fallback := terminalTaskReport{
+			executionExitProof:    item.report.executionExitProof,
 			kind:                  terminalTaskReportFail,
 			taskID:                item.report.taskID,
 			errorMessage:          fmt.Sprintf("successful terminal result was rejected by the server with HTTP %d; the original completion is preserved in the daemon failed terminal-report queue", status),
