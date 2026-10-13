@@ -738,6 +738,38 @@ describe("IssueDetail (shared)", () => {
     mockApiObj.getProject.mockReset();
   });
 
+  it("hides archived custom properties without clearing their saved values", async () => {
+    const property = {
+      id: "old-priority",
+      workspace_id: "ws-1",
+      name: "Priority",
+      type: "text",
+      config: {},
+      position: 0,
+      archived: true,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    mockApiObj.listProperties.mockResolvedValue({
+      properties: [property, { ...property, id: "environment", name: "Environment", archived: false }],
+      total: 2,
+    });
+    const issue = {
+      ...mockIssue,
+      properties: { "old-priority": "Legacy high", environment: "Staging" },
+    };
+    mockApiObj.getIssue.mockResolvedValue(issue);
+
+    renderIssueDetail();
+
+    await screen.findByText("Environment");
+    expect(screen.getAllByText("Priority")).toHaveLength(1);
+    expect(screen.queryByText("Legacy high")).not.toBeInTheDocument();
+    expect(screen.getByText("Staging")).toBeInTheDocument();
+    expect(issue.properties["old-priority"]).toBe("Legacy high");
+    expect(mockApiObj.updateIssue).not.toHaveBeenCalled();
+  });
+
   it("counts comment files as deliverables, a re-upload once as v2, never the description's (MUL-7649)", async () => {
     const file = (id: string, over: Partial<Attachment>): Attachment => ({
       id,

@@ -2446,9 +2446,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const { data: attachedLabels = [] } = useQuery(issueLabelsOptions(wsId, id));
   const attachedLabelsCount = attachedLabels.length;
 
-  // Custom property catalog. Includes archived definitions: an issue can
-  // still carry a value written before the archive, and that row must stay
-  // renderable (read-only) until someone clears it.
+  // Retain archived definitions in the catalog without showing retired
+  // fields in the active inspector. Existing issue values remain untouched.
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(wsId, true));
 
   // Sub-issue rows only surface live definitions: the display picker offers
@@ -2746,15 +2745,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             </PropRow>
           )}
 
-          {/* Custom properties — same progressive disclosure as the
-              built-in optional props: a row renders when the issue has a
-              value OR the user added the property this session. Archived
-              definitions render read-only until their value is cleared. */}
-          {workspaceProperties
+          {/* Active custom properties follow the built-in optional props:
+              show a row when it has a value or was added this session. */}
+          {activeWorkspaceProperties
             .filter(
               (p) =>
                 issue.properties?.[p.id] !== undefined ||
-                (!p.archived && visibleCustomProps.has(p.id)),
+                visibleCustomProps.has(p.id),
             )
             .map((p) => (
               <PropRow
