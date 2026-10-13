@@ -4,6 +4,7 @@ import type { SourceContextCommentSnapshot } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 import { ReadonlyContent } from "../../editor";
 import { useT } from "../../i18n";
+import { syncedCommentContent } from "./synced-comment-content";
 
 export function SourceContextCommentList({
   comments,
@@ -85,7 +86,7 @@ export function SourceContextCommentList({
                 {comment.deleted === true ? (
                   <p className="italic text-muted-foreground">{t(($) => $.comment.deleted_placeholder)}</p>
                 ) : (
-                  <ReadonlyContent content={comment.content} />
+                  <ReadonlyContent content={syncedCommentContent(comment.content)} />
                 )}
               </div>
             </div>

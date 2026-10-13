@@ -7,6 +7,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { useT, useTimeAgo } from "../../i18n";
+import { syncedCommentContent } from "./synced-comment-content";
 
 // ---------------------------------------------------------------------------
 // ThreadMinimap — quick-jump rail with a complete comment outline.
@@ -76,7 +77,7 @@ const PREVIEW_BODY_MAX = 300;
  * the minimap card renders.
  */
 export function commentPreview(markdown: string): { title: string; body: string } {
-  const lines = markdown
+  const lines = syncedCommentContent(markdown)
     .replace(/```[\s\S]*?```/g, " ")
     .split(/\r?\n/)
     .map((line) =>

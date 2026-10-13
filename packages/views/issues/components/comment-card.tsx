@@ -57,6 +57,7 @@ import { RevisionConflictCompare } from "./revision-conflict-compare";
 import { InlineCommentRun, PlacedInlineCommentRun, useInlineCommentRunState, type InlineCommentRunState } from "./inline-comment-run";
 import { EMPTY_COMMENT_RUNS, isRunFailureNotice, orderThreadWithRuns, type CommentRun, type ThreadRunSlot } from "./comment-runs";
 import { descriptionPreview } from "./description-preview";
+import { syncedCommentContent } from "./synced-comment-content";
 import { useCommentAnnotations } from "./use-comment-annotations";
 import { useAttachmentVersions } from "./deliverables/attachment-versions";
 import { VersionBadge } from "./deliverables/version-badge";
@@ -907,7 +908,7 @@ function CommentRow({
           <div tabIndex={currentUserId ? 0 : undefined} role="group"
             aria-label={t(($) => $.reply.annotations.source_label, { name: entry.actor_name || getActorName(entry.actor_type, entry.actor_id) })}
             data-comment-content={entry.id} className="pl-12 pr-4 max-md:pl-3 max-md:pr-3 text-body leading-relaxed text-foreground">
-            <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
+            <ReadonlyContent content={syncedCommentContent(entry.content ?? "")} attachments={entry.attachments} />
           </div>
           <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-12 pr-4 max-md:pl-3 max-md:pr-3" />
           <div className="pl-12 pr-4 max-md:pl-3 max-md:pr-3">
@@ -941,7 +942,7 @@ function ReplyToQuote({ entry, onJump }: { entry: TimelineEntry; onJump?: (comme
   const { getActorName } = useActorName();
   const label = t(($) => $.comment.replying_to, {
     name: entry.actor_name || getActorName(entry.actor_type, entry.actor_id),
-    preview: descriptionPreview(entry.content ?? ""),
+    preview: descriptionPreview(syncedCommentContent(entry.content ?? "")),
   });
   return (
     <button type="button" disabled={!onJump} onClick={() => onJump?.(entry.id)} title={label}
@@ -1133,7 +1134,7 @@ function CommentCardImpl({
   const replyCount = visibleReplies.length;
   const repliedToIds = new Set(allNestedReplies.map((reply) => reply.parent_id));
   const deleted = isDeletedComment(entry);
-  const contentPreview = (entry.content ?? "").replace(/\n/g, " ").slice(0, 80);
+  const contentPreview = syncedCommentContent(entry.content ?? "").replace(/\n/g, " ").slice(0, 80);
   const reactions = entry.reactions ?? [];
 
   const isHighlighted = highlightedCommentId === entry.id;
@@ -1444,7 +1445,7 @@ function CommentCardImpl({
                 <div tabIndex={currentUserId ? 0 : undefined} role="group"
             aria-label={t(($) => $.reply.annotations.source_label, { name: entry.actor_name || getActorName(entry.actor_type, entry.actor_id) })}
             data-comment-content={entry.id} className="pl-8 max-md:pl-0 text-body leading-relaxed text-foreground">
-                  <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
+                  <ReadonlyContent content={syncedCommentContent(entry.content ?? "")} attachments={entry.attachments} />
                 </div>
                 <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-8 max-md:pl-0" />
                 <div className="pl-8 max-md:pl-0">

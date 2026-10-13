@@ -113,6 +113,19 @@ async function openMenuLayout(index: number): Promise<string[]> {
 const agentAuthor = { actor_type: "agent", actor_id: "agent-1" } as const;
 
 describe("CommentCard — actions menu layout", () => {
+  it("renders mirrored root and reply text without exposing sync control lines", () => {
+    const receipt = "[SaveReview:9add46d2-76e3-41d8-bc66-1179e146544c:tapd:1161188658001007147]";
+    const mirrored = (body: string) => `/note\n\nAlice · 2026-10-12 15:58:10\nDiscussion\n\n${body}\n\n来源：https://www.tapd.cn/61188658/bugtrace/bugs/view/1161188658001004433\n${receipt}`;
+    const root = { ...comment("root", null), content: mirrored("Root evidence") };
+    const reply = { ...comment("reply", "root"), content: mirrored("Reply evidence") };
+    renderThread(root, [reply]);
+    expect(screen.getByText(/Root evidence/)).not.toHaveTextContent("/note");
+    expect(screen.getByText(/Reply evidence/)).not.toHaveTextContent("SaveReview:");
+    expect(screen.getByText(/Root evidence/)).toHaveTextContent("[TAPD](https://www.tapd.cn/");
+    expect(root.content).toContain(receipt);
+    expect(reply.content).toMatch(/^\/note/);
+  });
+
   it("groups the author's root menu as edit/resolve, copy/derive, delete", async () => {
     renderThread(comment("root", null), []);
 
