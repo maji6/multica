@@ -10,6 +10,27 @@ import (
 	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
+func TestGetConfigPreservesIntegrationCapabilitiesAlongsideAttachmentOrigin(t *testing.T) {
+	origCfg := testHandler.cfg
+	t.Cleanup(func() { testHandler.cfg = origCfg })
+	testHandler.cfg.PublicURL = "https://attachments.example.com"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	var body map[string]json.RawMessage
+	testutil.Call(t, testHandler.GetConfig, req).Want(http.StatusOK).JSON(&body)
+
+	// SaveReview requires these wire-level declarations before automatic rework
+	// and property option updates; upstream attachment support must coexist.
+	for _, key := range []string{"task_execution_exit_supported", "property_append_options_supported"} {
+		if string(body[key]) != "true" {
+			t.Fatalf("%s: want true, got %s", key, body[key])
+		}
+	}
+	if got := string(body["attachment_public_url"]); got != `"https://attachments.example.com"` {
+		t.Fatalf("attachment_public_url: want configured origin, got %s", got)
+	}
+}
+
 func TestGetConfigReportsCdnSignedMode(t *testing.T) {
 	origStorage := testHandler.Storage
 	origSigner := testHandler.CFSigner
@@ -53,8 +74,13 @@ func TestGetConfigReportsCdnSignedMode(t *testing.T) {
 
 func TestGetConfigIncludesRuntimeAuthConfig(t *testing.T) {
 	origStorage := testHandler.Storage
+	origCfg := testHandler.cfg
 	testHandler.Storage = &mockStorage{}
-	defer func() { testHandler.Storage = origStorage }()
+	testHandler.cfg.PublicURL = "https://api.example.com"
+	defer func() {
+		testHandler.Storage = origStorage
+		testHandler.cfg = origCfg
+	}()
 
 	t.Setenv("ALLOW_SIGNUP", "false")
 	t.Setenv("GOOGLE_CLIENT_ID", "google-client-id")
@@ -79,6 +105,9 @@ func TestGetConfigIncludesRuntimeAuthConfig(t *testing.T) {
 
 	if cfg.CdnDomain != "cdn.example.com" {
 		t.Fatalf("cdn_domain: want cdn.example.com, got %q", cfg.CdnDomain)
+	}
+	if cfg.AttachmentPublicURL != "https://api.example.com" {
+		t.Fatalf("attachment_public_url = %q, want API public URL", cfg.AttachmentPublicURL)
 	}
 	if cfg.AllowSignup {
 		t.Fatalf("allow_signup: want false, got true")
