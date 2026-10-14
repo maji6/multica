@@ -1902,3 +1902,99 @@ func TestPropertyContainsPrefilterKeepsResultsExact(t *testing.T) {
 		})
 	}
 }
+
+// These are database-backed handler checks, including the durable editor.
+func TestPropertyRevisionAndActorEvidence(t *testing.T) {
+	prop := createTestProperty(t, map[string]any{"name": "Revision evidence", "type": "text"})
+	id := dbfx.Issue(t, "Property revision evidence")
+	var revision int64
+	if err := testPool.QueryRow(context.Background(), "SELECT revision FROM issue WHERE id=$1", id).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	write := func(method string, expected int64, value string) *httptest.ResponseRecorder {
+		path := "/api/issues/" + id + "/properties/" + prop.ID
+		body := map[string]any{"value": value, "expected_revision": expected}
+		if method == "DELETE" {
+			path += fmt.Sprintf("?expected_revision=%d", expected)
+		}
+		req := withIssuePropertyParams(newRequest(method, path, body), id, prop.ID)
+		w := httptest.NewRecorder()
+		if method == "DELETE" {
+			testHandler.DeleteIssueProperty(w, req)
+		} else {
+			testHandler.SetIssueProperty(w, req)
+		}
+		return w
+	}
+	if w := write("PUT", revision, "first"); w.Code != 200 {
+		t.Fatalf("set: %d %s", w.Code, w.Body.String())
+	}
+	if w := write("PUT", revision, "stale"); w.Code != 409 {
+		t.Fatalf("stale set: %d %s", w.Code, w.Body.String())
+	}
+	if w := write("DELETE", revision, ""); w.Code != 409 {
+		t.Fatalf("stale delete: %d %s", w.Code, w.Body.String())
+	}
+	if w := write("PUT", revision+1, "first"); w.Code != 200 {
+		t.Fatalf("no-op: %d %s", w.Code, w.Body.String())
+	}
+	if w := write("DELETE", revision+1, ""); w.Code != 200 {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	rows, err := testPool.Query(context.Background(), "SELECT actor_type,actor_id::text,details FROM activity_log WHERE issue_id=$1 AND action='property_changed' ORDER BY created_at,id", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var kind, actor string
+		var details []byte
+		if err := rows.Scan(&kind, &actor, &details); err != nil {
+			t.Fatal(err)
+		}
+		if kind != "member" || actor != testUserID {
+			t.Fatalf("wrong editor: %s %s", kind, actor)
+		}
+		var data map[string]any
+		if err := json.Unmarshal(details, &data); err != nil {
+			t.Fatal(err)
+		}
+		if data["property_id"] != prop.ID {
+			t.Fatalf("wrong property: %s", details)
+		}
+		count++
+	}
+	if count != 2 {
+		t.Fatalf("expected set+delete only, got %d", count)
+	}
+}
+
+func TestPropertyMaintenanceDoesNotWakeAgent(t *testing.T) {
+	issue := dbfx.Issue(t, "Maintenance property")
+	agent := dbfx.Agent(t, "Maintenance property", testRuntimeID)
+	dbfx.Cleanup(t, "DELETE FROM issue_wakeup WHERE issue_id=$1", issue)
+	dbfx.Cleanup(t, "DELETE FROM issue_wakeup_receipt WHERE wakeup_id IN(SELECT id FROM issue_wakeup WHERE issue_id=$1)", issue)
+	rec := httptest.NewRecorder()
+	req := withURLParam(newRequest("POST", "/", map[string]any{"agent_id": agent, "kind": "event", "event_types": []string{"issue.updated", "issue.properties_changed"}, "instruction": "Check ownership"}), "id", issue)
+	testHandler.CreateIssueWakeup(rec, req)
+	if rec.Code != 201 {
+		t.Fatalf("wakeup: %d %s", rec.Code, rec.Body.String())
+	}
+	prop := createTestProperty(t, map[string]any{"name": "Maintenance evidence", "type": "text"})
+	for _, quiet := range []bool{true, false} {
+		w := httptest.NewRecorder()
+		req := withIssuePropertyParams(newRequest("PUT", "/", map[string]any{"value": fmt.Sprint(quiet), "suppress_run": quiet}), issue, prop.ID)
+		testHandler.SetIssueProperty(w, req)
+		if w.Code != 200 {
+			t.Fatalf("property: %d %s", w.Code, w.Body.String())
+		}
+		count := dbfx.Count(t, "SELECT count(*) FROM issue_wakeup_receipt r JOIN issue_wakeup w ON w.id=r.wakeup_id WHERE w.issue_id=$1", issue)
+		if quiet && count != 0 || !quiet && count != 2 {
+			t.Fatalf("quiet=%v captured %d wakeups", quiet, count)
+		}
+	}
+	if n := dbfx.Count(t, "SELECT count(*) FROM activity_log WHERE issue_id=$1 AND action='property_changed'", issue); n != 2 {
+		t.Fatalf("missing maintenance audit %d", n)
+	}
+}

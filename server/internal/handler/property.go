@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 	"log/slog"
 	"math"
 	"net/http"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -691,7 +694,9 @@ func (h *Handler) UpdateProperty(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 type SetIssuePropertyRequest struct {
-	Value json.RawMessage `json:"value"`
+	Value            json.RawMessage `json:"value"`
+	SuppressRun      bool            `json:"suppress_run,omitempty"`
+	ExpectedRevision *int64          `json:"expected_revision,omitempty"`
 }
 
 func (h *Handler) SetIssueProperty(w http.ResponseWriter, r *http.Request) {
@@ -707,6 +712,12 @@ func (h *Handler) SetIssueProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.ExpectedRevision != nil && *req.ExpectedRevision < 1 {
+		writeError(w, http.StatusBadRequest, "expected_revision must be positive")
+		return
+	}
+
+	r = r.WithContext(context.WithValue(r.Context(), propertyMaintenanceKey{}, req.SuppressRun))
 	issue, ok := h.loadIssueForUser(w, r, issueID)
 	if !ok {
 		return
@@ -754,11 +765,16 @@ func (h *Handler) SetIssueProperty(w http.ResponseWriter, r *http.Request) {
 				return fail(status, msg)
 			}
 		}
+		before, err := q.GetIssue(r.Context(), issue.ID)
+		if err != nil {
+			return err
+		}
 		updated, err = q.SetIssuePropertyValue(r.Context(), db.SetIssuePropertyValueParams{
-			ID:          issue.ID,
-			WorkspaceID: issue.WorkspaceID,
-			Key:         uuidToString(def.ID),
-			Value:       value,
+			ID:               issue.ID,
+			WorkspaceID:      issue.WorkspaceID,
+			Key:              uuidToString(def.ID),
+			ExpectedRevision: propertyExpectedRevision(req.ExpectedRevision),
+			Value:            value,
 		})
 		if err != nil {
 			if isCheckViolation(err) {
@@ -766,9 +782,16 @@ func (h *Handler) SetIssueProperty(w http.ResponseWriter, r *http.Request) {
 			}
 			return err
 		}
-		return nil
+		return h.recordPropertyActivity(r, q, before, updated, uuidToString(def.ID), userID)
 	})
 	if err != nil {
+		if req.ExpectedRevision != nil && errors.Is(err, pgx.ErrNoRows) {
+			current, readErr := h.Queries.GetIssue(r.Context(), issue.ID)
+			if readErr == nil {
+				writeRevisionConflict(w, "issue", issue.ID, *req.ExpectedRevision, current.Revision)
+				return
+			}
+		}
 		if errors.Is(err, errClientRejected) {
 			writeError(w, httpStatus, httpMsg)
 			return
@@ -783,6 +806,8 @@ func (h *Handler) SetIssueProperty(w http.ResponseWriter, r *http.Request) {
 	properties := parseIssueProperties(updated.Properties)
 	h.publish(protocol.EventIssuePropertiesChanged, workspaceID, actorType, actorID, map[string]any{
 		"issue_id":       uuidToString(updated.ID),
+		"property_id":    uuidToString(propertyID),
+		"value":          properties[uuidToString(propertyID)],
 		"properties":     properties,
 		"issue_revision": updated.Revision,
 	})
@@ -797,6 +822,25 @@ func (h *Handler) DeleteIssueProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var req SetIssuePropertyRequest
+	if raw := r.URL.Query().Get("expected_revision"); raw != "" {
+		revision, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || revision < 1 {
+			writeError(w, http.StatusBadRequest, "expected_revision must be positive")
+			return
+		}
+		req.ExpectedRevision = &revision
+	}
+
+	if raw := r.URL.Query().Get("suppress_run"); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid suppress_run")
+			return
+		}
+		req.SuppressRun = value
+	}
+	r = r.WithContext(context.WithValue(r.Context(), propertyMaintenanceKey{}, req.SuppressRun))
 	issue, ok := h.loadIssueForUser(w, r, issueID)
 	if !ok {
 		return
@@ -819,14 +863,31 @@ func (h *Handler) DeleteIssueProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := wakeupWrite(h, r, func(q *db.Queries) (db.Issue, error) {
-		return q.DeleteIssuePropertyValue(r.Context(), db.DeleteIssuePropertyValueParams{
-			ID:          issue.ID,
-			WorkspaceID: issue.WorkspaceID,
-			Key:         uuidToString(propertyID),
+	var updated db.Issue
+	err := h.withPropertyLock(r, []string{"prop:" + uuidToString(propertyID)}, func(q *db.Queries) error {
+		before, err := q.GetIssue(r.Context(), issue.ID)
+		if err != nil {
+			return err
+		}
+		updated, err = q.DeleteIssuePropertyValue(r.Context(), db.DeleteIssuePropertyValueParams{
+			ID:               issue.ID,
+			WorkspaceID:      issue.WorkspaceID,
+			Key:              uuidToString(propertyID),
+			ExpectedRevision: propertyExpectedRevision(req.ExpectedRevision),
 		})
+		if err != nil {
+			return err
+		}
+		return h.recordPropertyActivity(r, q, before, updated, uuidToString(propertyID), userID)
 	})
 	if err != nil {
+		if req.ExpectedRevision != nil && errors.Is(err, pgx.ErrNoRows) {
+			current, readErr := h.Queries.GetIssue(r.Context(), issue.ID)
+			if readErr == nil {
+				writeRevisionConflict(w, "issue", issue.ID, *req.ExpectedRevision, current.Revision)
+				return
+			}
+		}
 		slog.Warn("DeleteIssuePropertyValue failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
 		writeError(w, http.StatusInternalServerError, "failed to unset property")
 		return
@@ -837,10 +898,41 @@ func (h *Handler) DeleteIssueProperty(w http.ResponseWriter, r *http.Request) {
 	properties := parseIssueProperties(updated.Properties)
 	h.publish(protocol.EventIssuePropertiesChanged, workspaceID, actorType, actorID, map[string]any{
 		"issue_id":       uuidToString(updated.ID),
+		"property_id":    uuidToString(propertyID),
+		"value":          properties[uuidToString(propertyID)],
 		"properties":     properties,
 		"issue_revision": updated.Revision,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"properties": properties, "issue_revision": updated.Revision})
+}
+
+type propertyMaintenanceKey struct{}
+
+func propertyExpectedRevision(value *int64) pgtype.Int8 {
+	if value == nil {
+		return pgtype.Int8{}
+	}
+	return pgtype.Int8{Int64: *value, Valid: true}
+}
+
+// Persist evidence in the same transaction as the value. Reconnects and retries
+// can recover the actual editor without substituting the selected member.
+func (h *Handler) recordPropertyActivity(r *http.Request, q *db.Queries, before, after db.Issue, propertyID, userID string) error {
+	from, to := parseIssueProperties(before.Properties)[propertyID], parseIssueProperties(after.Properties)[propertyID]
+	if reflect.DeepEqual(from, to) {
+		return nil
+	}
+	actorType, actorID := h.resolveActor(r, userID, uuidToString(after.WorkspaceID))
+	details := map[string]any{"property_id": propertyID, "from": from, "to": to, "issue_revision": after.Revision}
+	if task := h.wakeupSourceTaskID(r); task.Valid {
+		details["task_id"] = uuidToString(task)
+	}
+	raw, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
+	_, err = q.CreateActivity(r.Context(), db.CreateActivityParams{ID: dbid.NewV7(), WorkspaceID: after.WorkspaceID, IssueID: after.ID, ActorType: pgtype.Text{String: actorType, Valid: true}, ActorID: parseUUID(actorID), Action: "property_changed", Details: raw})
+	return err
 }
 
 // withPropertyLock runs fn inside a transaction holding the advisory lock
@@ -855,6 +947,11 @@ func (h *Handler) withPropertyLock(r *http.Request, lockKeys []string, fn func(q
 		return err
 	}
 	defer tx.Rollback(r.Context())
+	if suppress, _ := r.Context().Value(propertyMaintenanceKey{}).(bool); suppress {
+		if _, err := tx.Exec(r.Context(), "SELECT set_config('multica.suppress_property_wakeup','true',true)"); err != nil {
+			return err
+		}
+	}
 	// Callers pass keys in a fixed global order (workspace before property)
 	// so overlapping lock sets cannot deadlock.
 	for _, key := range lockKeys {

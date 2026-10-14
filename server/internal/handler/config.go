@@ -91,6 +91,8 @@ type AppConfig struct {
 	// fail closed when this declaration is absent.
 	IssueCreatePropertiesSupported bool `json:"issue_create_properties_supported"`
 	PropertyAppendOptionsSupported bool `json:"property_append_options_supported"`
+	// Property writes support compare-and-set and transactional actor activities.
+	PropertyRevisionSupported bool `json:"property_revision_supported"`
 
 	// CommentDeleteKeepRepliesSupported tells clients that deleting a comment
 	// removes only that comment and keeps its replies (#8296), and that
@@ -119,6 +121,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		AgentConversationStartersSupported: true,
 		IssueCreatePropertiesSupported:     true,
 		PropertyAppendOptionsSupported:     true,
+		PropertyRevisionSupported:          true,
 		CommentDeleteKeepRepliesSupported:  true,
 		TaskExecutionExitSupported:         true,
 		AllowSignup:                        os.Getenv("ALLOW_SIGNUP") != "false",
