@@ -565,7 +565,6 @@
     "edit_placeholder": "Edit comment...",
     "save_action": "Save",
     "cancel_edit": "Cancel",
-    "synced_from": "From {{source}}",
     "copy_action": "Copy",
     "copy_link_action": "Copy link",
     "link_copied": "Link copied",

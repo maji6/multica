@@ -553,7 +553,6 @@
     "edit_placeholder": "댓글 수정...",
     "save_action": "저장",
     "cancel_edit": "취소",
-    "synced_from": "{{source}}에서",
     "copy_action": "복사",
     "copy_link_action": "링크 복사",
     "link_copied": "링크를 복사했습니다",
