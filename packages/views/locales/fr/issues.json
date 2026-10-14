@@ -565,6 +565,7 @@
     "edit_placeholder": "Modifier le commentaire...",
     "save_action": "Enregistrer",
     "cancel_edit": "Annuler",
+    "synced_from": "Depuis {{source}}",
     "copy_action": "Copier",
     "copy_link_action": "Copier le lien",
     "link_copied": "Lien copié",

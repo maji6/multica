@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronRight, CornerUpLeft, ListChevronsDownUp, Copy, Link2, Loader2, MessageSquarePlus, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { ArrowUpRight, CheckCircle2, ChevronRight, CornerUpLeft, ListChevronsDownUp, Copy, Link2, Loader2, MessageSquarePlus, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@multica/ui/components/ui/card";
 import { Button, buttonVariants } from "@multica/ui/components/ui/button";
@@ -57,7 +57,7 @@ import { RevisionConflictCompare } from "./revision-conflict-compare";
 import { InlineCommentRun, PlacedInlineCommentRun, useInlineCommentRunState, type InlineCommentRunState } from "./inline-comment-run";
 import { EMPTY_COMMENT_RUNS, isRunFailureNotice, orderThreadWithRuns, type CommentRun, type ThreadRunSlot } from "./comment-runs";
 import { descriptionPreview } from "./description-preview";
-import { syncedCommentContent } from "./synced-comment-content";
+import { parseSyncedComment, syncedCommentContent } from "./synced-comment-content";
 import { useCommentAnnotations } from "./use-comment-annotations";
 import { useAttachmentVersions } from "./deliverables/attachment-versions";
 import { VersionBadge } from "./deliverables/version-badge";
@@ -630,6 +630,34 @@ function CommentRevisionConflict({
 // Single comment row (used for both parent and replies within the same Card)
 // ---------------------------------------------------------------------------
 
+function CommentMetadata({ entry }: { entry: TimelineEntry }) {
+  const { t } = useT("issues");
+  const locale = useLocale();
+  const timeAgo = useTimeAgo();
+  const source = parseSyncedComment(entry.content ?? "");
+  return <>
+    {source && <a
+      href={source.sourceUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex shrink-0 items-center gap-0.5 text-caption text-muted-foreground hover:text-foreground hover:underline focus-visible:underline"
+    >
+      {t(($) => $.comment.synced_from, { source: "TAPD" })}
+      <ArrowUpRight aria-hidden className="h-3 w-3" />
+    </a>}
+    <Tooltip>
+      <TooltipTrigger render={
+        <span className="shrink-0 text-caption text-muted-foreground cursor-default">
+          {source ? source.createdAt.slice(11, 16) : timeAgo(entry.created_at)}
+        </span>
+      } />
+      <TooltipContent side="top">
+        {source ? `${source.author} · ${source.createdAt}` : new Date(entry.created_at).toLocaleString(locale)}
+      </TooltipContent>
+    </Tooltip>
+  </>;
+}
+
 function CommentRow({
   runHeader,
   runMetadata,
@@ -669,8 +697,6 @@ function CommentRow({
   onCopyLink?: (commentId: string) => void;
 }) {
   const { t } = useT("issues");
-  const locale = useLocale();
-  const timeAgo = useTimeAgo();
   const { getActorName } = useActorName();
 
   const edit = useEditAttachmentState(issueId, entry, onEdit);
@@ -716,18 +742,7 @@ function CommentRow({
         <span className="cursor-pointer text-body font-medium">
           {entry.actor_name || getActorName(entry.actor_type, entry.actor_id)}
         </span>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span className="text-caption text-muted-foreground cursor-default">
-                {timeAgo(entry.created_at)}
-              </span>
-            }
-          />
-          <TooltipContent side="top">
-            {new Date(entry.created_at).toLocaleString(locale)}
-          </TooltipContent>
-        </Tooltip>
+        <CommentMetadata entry={entry} />
 
         <SteerBadge issueId={issueId} entry={entry} />
         {runHeader}
@@ -785,7 +800,7 @@ function CommentRow({
               )}
               {(canEditEntry || onResolveToggle) && <DropdownMenuSeparator />}
               <DropdownMenuItem onClick={() => {
-                void copyText(entry.content ?? "").then((ok) => {
+                void copyText(syncedCommentContent(entry.content ?? "")).then((ok) => {
                   if (ok) toast.success(t(($) => $.comment.copied_toast));
                 });
               }}>
@@ -1035,8 +1050,6 @@ function CommentCardImpl({
   highlightedCommentId,
 }: CommentCardProps) {
   const { t } = useT("issues");
-  const locale = useLocale();
-  const timeAgo = useTimeAgo();
   const { getActorName } = useActorName();
   const replyTarget = useCommentDraftStore((s) => s.drafts[`reply:${issueId}:${entry.id}`]?.replyTarget);
   const replyTargetId = replyTarget?.commentId ?? entry.id;
@@ -1225,18 +1238,7 @@ function CommentCardImpl({
                   <span className="shrink-0 cursor-pointer text-body font-medium">
                     {entry.actor_name || getActorName(entry.actor_type, entry.actor_id)}
                   </span>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span className="shrink-0 text-caption text-muted-foreground cursor-default">
-                          {timeAgo(entry.created_at)}
-                        </span>
-                      }
-                    />
-                    <TooltipContent side="top">
-                      {new Date(entry.created_at).toLocaleString(locale)}
-                    </TooltipContent>
-                  </Tooltip>
+                  <CommentMetadata entry={entry} />
 
                   <SteerBadge issueId={issueId} entry={entry} />
                   {renderRuns(entry.id, "header")}
@@ -1316,7 +1318,7 @@ function CommentCardImpl({
                       )}
                       {(canEditEntry || onResolveToggle) && <DropdownMenuSeparator />}
                       <DropdownMenuItem onClick={() => {
-                        void copyText(entry.content ?? "").then((ok) => {
+                        void copyText(syncedCommentContent(entry.content ?? "")).then((ok) => {
                           if (ok) toast.success(t(($) => $.comment.copied_toast));
                         });
                       }}>

@@ -553,6 +553,7 @@
     "edit_placeholder": "コメントを編集...",
     "save_action": "保存",
     "cancel_edit": "キャンセル",
+    "synced_from": "{{source}} から",
     "copy_action": "コピー",
     "copy_link_action": "リンクをコピー",
     "link_copied": "リンクをコピーしました",

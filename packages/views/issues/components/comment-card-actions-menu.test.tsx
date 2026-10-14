@@ -4,6 +4,9 @@ import { forwardRef, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { TimelineEntry } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
+import { copyText } from "@multica/ui/lib/clipboard";
+
+vi.mock("@multica/ui/lib/clipboard", () => ({ copyText: vi.fn().mockResolvedValue(true) }));
 
 // Comment "more actions" menu layout, in three groups: act on the comment
 // (Edit, then Resolve), take it elsewhere (Copy, Copy link, Create sub-issue),
@@ -121,9 +124,22 @@ describe("CommentCard — actions menu layout", () => {
     renderThread(root, [reply]);
     expect(screen.getByText(/Root evidence/)).not.toHaveTextContent("/note");
     expect(screen.getByText(/Reply evidence/)).not.toHaveTextContent("SaveReview:");
-    expect(screen.getByText(/Root evidence/)).toHaveTextContent("[TAPD](https://www.tapd.cn/");
+    expect(screen.getByText(/Root evidence/)).not.toHaveTextContent("Alice");
+    expect(screen.getByText(/Reply evidence/)).not.toHaveTextContent("2026-10-12");
+    const links = screen.getAllByRole("link", { name: "From TAPD" });
+    expect(links).toHaveLength(2);
+    for (const link of links) expect(link).toHaveAttribute("href", "https://www.tapd.cn/61188658/bugtrace/bugs/view/1161188658001004433");
+    expect(screen.getAllByText("15:58")).toHaveLength(2);
     expect(root.content).toContain(receipt);
     expect(reply.content).toMatch(/^\/note/);
+  });
+
+  it.each([0, 1])("copies only the authored body for a synced comment at index %i", async (index) => {
+    const mirrored = (body: string) => `/note\n\nAlice · 2026-10-14 21:51:58\n\n${body}\n\n来源：https://www.tapd.cn/61188658/bugtrace/bugs/view/1161188658001004433\n[SaveReview:9add46d2-76e3-41d8-bc66-1179e146544c:tapd:1161188658001007147]`;
+    renderThread({ ...comment("root", null), content: mirrored("Root evidence") }, [{ ...comment("reply", "root"), content: mirrored("Reply evidence") }]);
+    await openMenuLayout(index);
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Copy$/ }));
+    expect(copyText).toHaveBeenLastCalledWith(index ? "Reply evidence" : "Root evidence");
   });
 
   it("groups the author's root menu as edit/resolve, copy/derive, delete", async () => {
