@@ -375,6 +375,8 @@ function formatActivity(
       });
     case "description_updated":
       return t(($) => $.activity.description_updated);
+    case "property_changed":
+      return t(($) => $.activity.property_changed);
     case "duplicate_marked":
       return t(($) => $.activity.duplicate_marked, {
         identifier: details.original_identifier || "?",

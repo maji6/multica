@@ -2027,6 +2027,17 @@ describe("IssueDetail (shared)", () => {
     expect(screen.getByText(/changed priority/i)).toBeInTheDocument();
   });
 
+  it("describes a property edit without exposing the internal event key", async () => {
+    mockApiObj.listTimeline.mockResolvedValue([{
+      type: "activity", id: "property-edit", actor_type: "member", actor_id: "user-1",
+      action: "property_changed", details: { property_id: "941f646a-bf77-4862-b7c1-0a064e4e91cb", to: "member:user-1" },
+      created_at: "2026-10-14T00:00:00Z",
+    }] as TimelineEntry[]);
+    renderIssueDetail();
+    expect(await screen.findByText("updated a property")).toBeInTheDocument();
+    expect(screen.queryByText("property_changed")).not.toBeInTheDocument();
+  });
+
   // Duplicate marks (MUL-7349) name another issue; the identifier is a link
   // to it, and a mark removed because its original was deleted is plain text.
   it("links a duplicate mark to the issue it names", async () => {
