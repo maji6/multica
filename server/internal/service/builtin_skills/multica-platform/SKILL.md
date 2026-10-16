@@ -25,7 +25,6 @@ Read the invariants below, then open the reference(s) your task actually needs
 | `references/squads.md` | Squads: leader routing, roster, recording leader activity, why a squad did or did not run |
 | `references/autopilots.md` | Autopilots: schedule / webhook / manual triggers, `create_issue` vs `run_only`, why one did not fire |
 | `references/projects.md` | Projects and their durable resources (`github_repo`, `local_directory`, worktree mode) |
-| `references/gongfeng.md` | Tencent Gongfeng repositories: CLI authentication, creating MRs, global `id` versus repository-local `iid` |
 | `references/runtimes.md` | Runtimes, daemons, `repo checkout`, and the task CLI boundary |
 | `references/skill-import.md` | Importing a skill into this workspace from a URL or a local archive |
 
@@ -34,7 +33,7 @@ crosses domains needs each domain it touches — creating a squad, assigning it 
 issue, then writing a mention needs `squads.md`, `issues.md` and `mentions.md`,
 and skipping one of those means acting on a contract you have not read.
 
-What is never right is reading every reference because you are not sure. Each
+What is never right is reading all eight because you are not sure. Each
 reference states its own contracts in full and none depends on another, so
 pick by domain and skip the rest.
 
@@ -85,3 +84,8 @@ the user, say so and propose a scoped change.
 Do not silently alter routing, briefing, or trigger behavior to make a complaint
 go away. Those are product contracts, and changing one without confirmation
 moves the surprise to somebody else.
+
+## Tencent Gongfeng
+
+For Tencent Gongfeng repositories and MRs, read `references/gongfeng.md` for
+CLI authentication, creating MRs, and global `id` versus repository-local `iid`.
