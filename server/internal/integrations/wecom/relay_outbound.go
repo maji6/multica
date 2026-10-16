@@ -953,7 +953,7 @@ func (r *RelayOutbound) confirmInbox(ctx context.Context, eventID string) relayP
 	// that the delivery is unknown -- nothing sent, nothing re-routed. In a
 	// production request the 5s budget leaves the 2s window plenty of room, so
 	// this is the backstop rather than the common exit.
-	if err := ctx.Err(); err != nil {
+	if err := ctx.Err(); err != nil || settleBudgetSpent(ctx) {
 		r.logger.WarnContext(ctx, "wecom relay: the caller's budget ran out before an inbox push's bot could be confirmed; not re-routing",
 			"error", err, "event_id", eventID)
 		return relayUncertain

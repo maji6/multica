@@ -105,6 +105,26 @@ func TestTryDeliverInbox_WaitIsBoundedByTheCallersDeadline(t *testing.T) {
 	}
 }
 
+type inboxDeadlineBeforeCancel struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c inboxDeadlineBeforeCancel) Deadline() (time.Time, bool) { return c.deadline, true }
+
+func TestTryDeliverInbox_ExpiredDeadlineDoesNotWaitForCancellationSignal(t *testing.T) {
+	t.Parallel()
+	rig := newInboxWaitRig(t, 3*time.Second)
+	// A deadline can pass before the timer goroutine closes Done.
+	ctx := inboxDeadlineBeforeCancel{Context: context.Background(), deadline: time.Now().Add(-time.Millisecond)}
+	if got, _ := rig.deliver(ctx, agentInboxItem("new_comment", inboxWaitAgentID)); got {
+		t.Error("expired caller reported delivery before its cancellation signal arrived")
+	}
+	if n := rig.relay.publishedTo(inboxWaitFallbackInst); n != 0 {
+		t.Errorf("expired caller published %d fallback frames, want 0", n)
+	}
+}
+
 // TestTryDeliverInbox_FallbackAttemptDoesNotWaitAgain: the fallback is the last
 // route, so a no-holder verdict for it changes nothing. It must publish and
 // return, leaving the cost at exactly one window rather than two.
