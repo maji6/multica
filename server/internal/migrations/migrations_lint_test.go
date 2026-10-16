@@ -17,6 +17,18 @@ func TestMigrationNumericPrefixesAreUnique(t *testing.T) {
 	// From 129 onward, keep the numeric sequence unique so release tooling and
 	// operators can identify one schema change unambiguously by its number.
 	const firstUniqueMigrationNumber = 129
+	// These fork migrations shipped before v0.6.3 reused their numbers.
+	// The runner records full stems, so renaming applied files would replay DDL.
+	// Allow only the published pairs; any new collision must still fail.
+	publishedForkPairs := map[[2]string]bool{
+		{"573_gongfeng_provider", "573_issue_workflow"}:                              true,
+		{"574_gongfeng_sync", "574_issue_workflow_pkey_index"}:                       true,
+		{"575_gongfeng_repository_key", "575_issue_workflow_primary_key"}:            true,
+		{"576_gongfeng_snapshot_attempt", "576_issue_workflow_workspace_name_index"}: true,
+		{"577_gongfeng_sync_fencing", "577_project_workflow_id"}:                     true,
+		{"578_agent_task_workflow_step", "578_gongfeng_pull_request_project_key"}:    true,
+		{"579_property_maintenance_wakeup", "579_wakeup_skip_handed_to_agent"}:       true,
+	}
 	stemByNumber := make(map[int]string)
 	for _, file := range files {
 		stem, _, ok := splitMigrationFilename(filepath.Base(file))
@@ -32,6 +44,9 @@ func TestMigrationNumericPrefixesAreUnique(t *testing.T) {
 			continue
 		}
 		if previous, exists := stemByNumber[number]; exists {
+			if publishedForkPairs[[2]string{previous, stem}] {
+				continue
+			}
 			t.Errorf("migrations %s and %s share numeric prefix %s", previous, stem, prefix)
 			continue
 		}
