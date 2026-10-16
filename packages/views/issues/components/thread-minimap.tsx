@@ -9,7 +9,6 @@ import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { useT, useTimeAgo } from "../../i18n";
 import { syncedCommentContent } from "./synced-comment-content";
 
-// ---------------------------------------------------------------------------
 // ThreadMinimap — quick-jump rail with a complete comment outline.
 // Every thread is a long tick and every reply a short tick beneath it, so the
 // rail doubles as a map of where the conversation runs long. Hovering or
@@ -32,9 +31,7 @@ const PREVIEW_OPEN_DELAY_MS = 150;
 /** Grace period on leave — long enough to travel from rail onto the card. */
 const PREVIEW_CLOSE_DELAY_MS = 150;
 
-// ---------------------------------------------------------------------------
 // Hover wave — Dock-style proximity magnification
-// ---------------------------------------------------------------------------
 //
 // While the pointer travels along the rail, every tick scales with a cosine
 // falloff of its distance to the cursor, so the hovered tick peaks and its
@@ -153,9 +150,7 @@ function flattenThreads(threads: readonly ThreadMinimapThread[]): MinimapItem[] 
   return items;
 }
 
-// ---------------------------------------------------------------------------
 // useVisibleCommentIds — "which rail comments are on screen right now"
-// ---------------------------------------------------------------------------
 //
 // Which ticked comments intersect the scroll viewport, so the rail can darken
 // their ticks. A thread root's anchor wraps its whole card, so a thread tick

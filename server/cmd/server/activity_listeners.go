@@ -76,6 +76,14 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 		assigneeChanged, _ := payload["assignee_changed"].(bool)
 		descriptionChanged, _ := payload["description_changed"].(bool)
 
+		// A workflow handoff (MUL-7420) rides on the status row: entering the
+		// step is what moved the issue to its handler, so the timeline shows
+		// one entry and the separate assignee row would only repeat it.
+		handoff, _ := payload["workflow_handoff"].(map[string]string)
+		if statusChanged && handoff != nil {
+			assigneeChanged = false
+		}
+
 		if statusChanged {
 			prevStatus, _ := payload["prev_status"].(string)
 			detailsMap := map[string]string{
@@ -84,6 +92,9 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 			}
 			if taskID, _ := payload["task_id"].(string); taskID != "" {
 				detailsMap["task_id"] = taskID
+			}
+			for k, v := range handoff {
+				detailsMap["handoff_"+k] = v
 			}
 			// PR auto-complete (MUL-7429): say why the status moved, so the
 			// timeline explains the change without a hidden rule.

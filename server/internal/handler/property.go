@@ -86,9 +86,7 @@ var reservedPropertyNames = map[string]struct{}{
 	"metadata": {}, "properties": {},
 }
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 
 type PropertyOption struct {
 	ID    string `json:"id"`
@@ -182,9 +180,7 @@ type UpdatePropertyRequest struct {
 	AppendOptions []PropertyOption `json:"append_options"`
 }
 
-// ---------------------------------------------------------------------------
 // Validation
-// ---------------------------------------------------------------------------
 
 func normalizePropertyName(name string) string {
 	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), " ", "_")
@@ -307,9 +303,7 @@ func selectOptionsHint(cfg PropertyConfig) string {
 	return strings.Join(parts, ", ")
 }
 
-// ---------------------------------------------------------------------------
 // Actor values (MUL-6286)
-// ---------------------------------------------------------------------------
 
 // Compatibility aliases keep the focused handler tests on the same helper
 // names while the implementation is shared with IssueService.Create.
@@ -397,9 +391,7 @@ func parseIssueProperties(raw []byte) map[string]any {
 	return util.JSONObjectOrEmpty(raw)
 }
 
-// ---------------------------------------------------------------------------
 // Definition handlers
-// ---------------------------------------------------------------------------
 
 // requirePropertyAdmin gates definition writes: human owner/admin members
 // only. Agent actors are rejected before the role check — an agent inherits
@@ -689,9 +681,7 @@ func (h *Handler) UpdateProperty(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// ---------------------------------------------------------------------------
 // Issue value handlers
-// ---------------------------------------------------------------------------
 
 type SetIssuePropertyRequest struct {
 	Value            json.RawMessage `json:"value"`
@@ -965,9 +955,7 @@ func (h *Handler) withPropertyLock(r *http.Request, lockKeys []string, fn func(q
 	return tx.Commit(r.Context())
 }
 
-// ---------------------------------------------------------------------------
 // List-endpoint support: properties filter + property sort expressions
-// ---------------------------------------------------------------------------
 
 const (
 	maxPropertiesFilterDefinitions = 20

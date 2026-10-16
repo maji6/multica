@@ -105,9 +105,7 @@ function StickyHeaderShell({
   );
 }
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 
 interface CommentCardProps {
   issueId: string;
@@ -161,9 +159,7 @@ interface CommentCardProps {
   highlightedCommentId?: string | null;
 }
 
-// ---------------------------------------------------------------------------
 // Shared delete confirmation dialog
-// ---------------------------------------------------------------------------
 
 function DeleteCommentDialog({
   open,
@@ -204,9 +200,7 @@ function DeleteCommentDialog({
   );
 }
 
-// ---------------------------------------------------------------------------
 // Standalone attachment list — renders attachments not already in the markdown
-// ---------------------------------------------------------------------------
 
 export function AttachmentList({
   attachments,
@@ -357,9 +351,7 @@ function TaskCommentRetryButton({
   );
 }
 
-// ---------------------------------------------------------------------------
 // Shared edit-attachment state hook
-// ---------------------------------------------------------------------------
 
 const NEVER_STEER = () => false;
 
@@ -626,9 +618,7 @@ function CommentRevisionConflict({
   );
 }
 
-// ---------------------------------------------------------------------------
 // Single comment row (used for both parent and replies within the same Card)
-// ---------------------------------------------------------------------------
 
 function CommentRow({
   runHeader,
@@ -1000,9 +990,7 @@ export function AgentRunComment({ run, standalone = false, commentProps, enterin
   );
 }
 
-// ---------------------------------------------------------------------------
 // CommentCard — One Card per thread (parent + all replies flat inside)
-// ---------------------------------------------------------------------------
 
 // A quick action posts an ordinary comment and is rendered as one (MUL-5465).
 // It briefly had a collapsed one-line header that expanded to reveal the
