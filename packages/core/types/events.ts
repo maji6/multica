@@ -104,6 +104,8 @@ export interface IssueCreatedPayload {
 }
 
 export interface IssueUpdatedPayload {
+  /** Exact authoring run for agent writes; absent for member/system writes. */
+  task_id?: string;
   issue: Issue;
   // The server stamps issue:updated with which fields actually changed
   // (server/internal/handler/issue.go publish). assignee_changed lets the

@@ -4036,7 +4036,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	dueDateChanged := prevDueDate != resp.DueDate && (prevDueDate == nil) != (resp.DueDate == nil) ||
 		(prevDueDate != nil && resp.DueDate != nil && *prevDueDate != *resp.DueDate)
 
-	h.publish(protocol.EventIssueUpdated, workspaceID, actorType, actorID, map[string]any{
+	updatedPayload := map[string]any{
 		"issue":               resp,
 		"assignee_changed":    assigneeChanged,
 		"status_changed":      statusChanged,
@@ -4060,7 +4060,11 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		// and clients refresh the two issues' relations from it.
 		"duplicate_of_issue_id":      liveDuplicateMark(issue.Status, issue.DuplicateOfIssueID),
 		"prev_duplicate_of_issue_id": liveDuplicateMark(prevIssue.Status, prevIssue.DuplicateOfIssueID),
-	})
+	}
+	if params.SourceTaskID.Valid {
+		updatedPayload["task_id"] = uuidToString(params.SourceTaskID)
+	}
+	h.publish(protocol.EventIssueUpdated, workspaceID, actorType, actorID, updatedPayload)
 	if attachmentsChanged {
 		// The full owner snapshot must be admitted before an auxiliary event at
 		// the same revision. Otherwise clients advance only the revision here and
@@ -4802,15 +4806,22 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		priorityChanged := req.Updates.Priority != nil && prevIssue.Priority != issue.Priority
 		projectChanged := req.Updates.ProjectID != nil && uuidToString(prevIssue.ProjectID) != uuidToString(issue.ProjectID)
 
-		h.publish(protocol.EventIssueUpdated, workspaceID, actorType, actorID, map[string]any{
+		updatedPayload := map[string]any{
 			"issue":                      resp,
 			"assignee_changed":           assigneeChanged,
 			"status_changed":             statusChanged,
 			"priority_changed":           priorityChanged,
 			"project_changed":            projectChanged,
+			"prev_status":                prevIssue.Status,
+			"prev_assignee_type":         textToPtr(prevIssue.AssigneeType),
+			"prev_assignee_id":           uuidToPtr(prevIssue.AssigneeID),
 			"duplicate_of_issue_id":      liveDuplicateMark(issue.Status, issue.DuplicateOfIssueID),
 			"prev_duplicate_of_issue_id": liveDuplicateMark(prevIssue.Status, prevIssue.DuplicateOfIssueID),
-		})
+		}
+		if params.SourceTaskID.Valid {
+			updatedPayload["task_id"] = uuidToString(params.SourceTaskID)
+		}
+		h.publish(protocol.EventIssueUpdated, workspaceID, actorType, actorID, updatedPayload)
 
 		// Reassignment does not cancel existing tasks (#4963 / MUL-4113) —
 		// mirrors UpdateIssue. See that handler for the rationale.

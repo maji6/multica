@@ -82,6 +82,9 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 				"from": prevStatus,
 				"to":   issue.Status,
 			}
+			if taskID, _ := payload["task_id"].(string); taskID != "" {
+				detailsMap["task_id"] = taskID
+			}
 			// PR auto-complete (MUL-7429): say why the status moved, so the
 			// timeline explains the change without a hidden rule.
 			if source, _ := payload["source"].(string); source == "pr_automation" {
@@ -136,6 +139,9 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 			prevAssigneeID, _ := payload["prev_assignee_id"].(*string)
 
 			detailsMap := map[string]string{}
+			if taskID, _ := payload["task_id"].(string); taskID != "" {
+				detailsMap["task_id"] = taskID
+			}
 			if prevAssigneeType != nil {
 				detailsMap["from_type"] = *prevAssigneeType
 			}
