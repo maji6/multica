@@ -104,7 +104,7 @@ export function createEnDict(
       label: "RUNTIMES",
       title: "One dashboard for all your compute",
       description:
-        "Local daemons and cloud runtimes, managed from a single panel. Real-time monitoring of online/offline status, usage charts, and activity heatmaps. Auto-detects 26 supported coding tools on your machine.",
+        "Local daemons and cloud runtimes, managed from a single panel. Real-time monitoring of online/offline status, usage charts, and activity heatmaps. Auto-detects 27 supported coding tools on your machine.",
       cards: [
         {
           title: "Unified runtime panel",
@@ -119,7 +119,7 @@ export function createEnDict(
         {
           title: "Auto-detection on first run",
           description:
-            "Multica scans for 26 supported coding tools \u2014 Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Oh-My-Pi, OpenClaw, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, and ZeroClaw \u2014 and registers a runtime for each one it finds.",
+            "Multica scans for 27 supported coding tools \u2014 Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Muse Code, Oh-My-Pi, OpenClaw, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, and ZeroClaw \u2014 and registers a runtime for each one it finds.",
         },
       ],
     },
@@ -139,7 +139,7 @@ export function createEnDict(
       {
         title: "Install the CLI & connect your machine",
         description:
-          "Run multica setup \u2014 it walks you through OAuth, starts the daemon, and scans for the 26 supported coding tools (Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Oh-My-Pi, OpenClaw, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, ZeroClaw). Whichever ones you already have installed get registered as runtimes automatically.",
+          "Run multica setup \u2014 it walks you through OAuth, starts the daemon, and scans for the 27 supported coding tools (Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Muse Code, Oh-My-Pi, OpenClaw, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, ZeroClaw). Whichever ones you already have installed get registered as runtimes automatically.",
       },
       {
         title: "Create your first agent",
@@ -196,7 +196,7 @@ export function createEnDict(
       {
         question: "What coding agents does Multica support?",
         answer:
-          "Multica supports 26 coding tools out of the box: Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Oh-My-Pi, OpenClaw, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, and ZeroClaw. The daemon auto-detects whichever CLIs you already have installed and registers a runtime for each one. Since the source code is public, you can also add your own backends.",
+          "Multica supports 27 coding tools out of the box: Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Muse Code, Oh-My-Pi, OpenClaw, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, and ZeroClaw. The daemon auto-detects whichever CLIs you already have installed and registers a runtime for each one. Since the source code is public, you can also add your own backends.",
       },
       {
         question: "Do I need to self-host, or is there a cloud version?",
@@ -522,6 +522,52 @@ export function createEnDict(
       fixes: "Bug Fixes",
     },
     entries: [
+      {
+        version: "0.6.4",
+        date: "2026-10-20",
+        title: "Interactive Markdown tables, Muse Code, safer private runtimes, and steadier runs",
+        changes: [],
+        features: [
+          "Markdown tables let you resize columns, enlarge them, sort and filter, and copy.",
+          "Issue reference cards show more context, and Shift+click opens a side preview.",
+          "With Muse Code 1.4.10 or later installed and signed in, agents can run tasks on it and resume sessions.",
+          "On macOS and Linux, Cursor 2026.10.14 or later accepts new guidance mid-run, except in local folders.",
+          "Quick actions can post a preset comment without picking an agent or squad.",
+          "The Inbox can show only Issues that no agent is working on.",
+          "Rename an Issue straight from its actions menu in lists and boards.",
+        ],
+        improvements: [
+          "Enlarging an HTML preview keeps what you typed and clicked, and Issue description previews can be enlarged too.",
+          "The comment outline folds resolved threads by default; expand them any time.",
+          "Switching pages stays smoother while lots of updates come in.",
+          "More Gemini models and aliases show an estimated cost.",
+          "The docs add a guide to quick actions.",
+        ],
+        fixes: [
+          "Making a shared runtime private shows the impact first, then unbinds teammates' agents and cancels their runs.",
+          "Autopilots for those teammate agents are paused when a runtime becomes private, until you resume them.",
+          "Picking someone else's private runtime is flagged when you save the agent, not when it fails to run.",
+          "Replies to a comment delivered mid-run still go to the agent that received it.",
+          "A comment-triggered task you cancelled is no longer queued again on its own.",
+          "Replies to an assigned task stay in its thread, next to the execution log.",
+          "Claude runs that start slowly still accept guidance mid-run.",
+          "Codex user skills missing required details now load, and broken ones are skipped with a warning.",
+          "After a failed DeepSeek Harness setup, it shows as not installed and can be retried, keeping your files.",
+          "A closed floating chat stops working in the background, and keeps your draft and uploads.",
+          "The desktop app opens some older workspaces, and keeps their tabs.",
+          "Creating a local project on Linux opens the folder picker.",
+          "With the unread filter on, an opened notification no longer vanishes as it is marked read.",
+          "Comment links on desktop jump to the right comment.",
+          "The browser tab keeps showing the title of the workspace page you are on.",
+          "Archiving an agent with a long name keeps the name and confirm button inside the dialog.",
+          "Pictures quoted in WeCom reach the agent, matched with their text.",
+          "Files stop sending to WeCom once its connection is revoked.",
+          "WeCom notifications no longer risk being sent twice.",
+          "PR checks and check-based wakeups work even when the GitHub App lacks Contents access.",
+          "English docs pages no longer flicker on load.",
+          "Cancelled tasks no longer add an extra English sentence.",
+        ],
+      },
       {
         version: "0.6.3",
         date: "2026-10-16",

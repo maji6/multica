@@ -141,6 +141,8 @@
     "field_name": "이름",
     "field_name_placeholder": "코드 리뷰",
     "field_target": "실행자",
+    "no_target": "대상 없음",
+    "no_target_hint": "아무도 멘션하지 않고 메시지를 게시합니다.",
     "field_prompt": "프롬프트",
     "field_prompt_placeholder": "이 태스크에 연결된 코드를 검토하고 정확성과 예외 상황을 중점적으로 확인하세요.",
     "prompt_hint": "작성한 그대로 전달됩니다. 에이전트는 태스크를 이미 읽을 수 있습니다.",

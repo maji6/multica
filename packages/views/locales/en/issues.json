@@ -470,6 +470,9 @@
     "thread_nav_label": "Jump to comment thread",
     "thread_nav_resolved_label": "{{title}} (resolved)",
     "thread_nav_reply_label": "{{author}}: {{title}}",
+    "thread_nav_show_replies_one": "Show {{count}} reply",
+    "thread_nav_show_replies_other": "Show {{count}} replies",
+    "thread_nav_hide_replies": "Hide replies",
     "sidebar_tooltip": "Toggle right sidebar",
     "find": {
       "placeholder": "Find in issue...",
@@ -869,6 +872,7 @@
     "updated_ago": "Updated {{time}}"
   },
   "actions": {
+    "rename_issue": "Rename issue",
     "status": "Status",
     "priority": "Priority",
     "assignee": "Assignee",
@@ -1749,5 +1753,8 @@
         }
       }
     }
+  },
+  "hover_card": {
+    "created_updated": "created {{created}} · updated {{updated}}"
   }
 }

@@ -465,6 +465,8 @@
     "thread_nav_label": "스레드로 이동",
     "thread_nav_resolved_label": "{{title}} (해결됨)",
     "thread_nav_reply_label": "{{author}}: {{title}}",
+    "thread_nav_show_replies_other": "답글 {{count}}개 펼치기",
+    "thread_nav_hide_replies": "답글 접기",
     "sidebar_tooltip": "오른쪽 사이드바 열기/닫기",
     "find": {
       "placeholder": "태스크에서 찾기...",
@@ -828,6 +830,7 @@
     "updated_ago": "{{time}} 수정됨"
   },
   "actions": {
+    "rename_issue": "태스크 이름 변경",
     "status": "상태",
     "priority": "우선순위",
     "assignee": "담당자",
@@ -1684,5 +1687,8 @@
         }
       }
     }
+  },
+  "hover_card": {
+    "created_updated": "{{created}} 생성 · {{updated}} 수정됨"
   }
 }

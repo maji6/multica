@@ -143,6 +143,8 @@
     "field_name": "Nom",
     "field_name_placeholder": "Relecture de code",
     "field_target": "S'exécute en tant que",
+    "no_target": "Aucune cible",
+    "no_target_hint": "Publie un message sans mentionner personne.",
     "field_prompt": "Invite",
     "field_prompt_placeholder": "Relire le code lié à cette tâche. Se concentrer sur la justesse et les cas limites.",
     "prompt_hint": "Envoyée telle quelle. L'agent voit déjà la tâche.",

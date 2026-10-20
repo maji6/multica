@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
 import type { AgentRuntime, RuntimeUsage } from "@multica/core/types";
@@ -414,6 +415,109 @@ describe("estimateCost", () => {
           output_tokens: 1_000_000,
         }),
       ).toBeCloseTo(c.total, 5);
+    }
+  });
+
+  it("prices published Gemini token SKUs at standard rates in every bucket", () => {
+    const cases = [
+      { model: "gemini-4-argon", input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2 },
+      { model: "gemini-3.8-flash", input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 },
+      { model: "gemini-3.7-flash", input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 },
+      { model: "gemini-3.6-flash", input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 },
+      { model: "gemini-3.5-flash", input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 },
+      { model: "gemini-3.5-flash-lite", input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0.3 },
+      { model: "gemini-3.1-flash-lite", input: 0.25, output: 1.5, cacheRead: 0.025, cacheWrite: 0.25 },
+      { model: "gemini-3.1-pro", input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2 },
+      { model: "gemini-3.1-pro-preview", input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2 },
+      { model: "gemini-3.1-pro-preview-customtools", input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2 },
+      { model: "gemini-3-flash", input: 0.5, output: 3, cacheRead: 0.05, cacheWrite: 0.5 },
+      { model: "gemini-3-flash-preview", input: 0.5, output: 3, cacheRead: 0.05, cacheWrite: 0.5 },
+      { model: "gemini-2.5-pro", input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 1.25 },
+      { model: "gemini-2.5-flash", input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0.3 },
+      { model: "gemini-2.5-flash-lite", input: 0.1, output: 0.4, cacheRead: 0.01, cacheWrite: 0.1 },
+      { model: "gemini-robotics-er-2-preview", input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1 },
+      { model: "gemini-robotics-er-2-streaming-preview", input: 1, output: 5, cacheRead: 0, cacheWrite: 0 },
+      { model: "gemini-3.8-flash-tts", input: 0.5, output: 9, cacheRead: 0, cacheWrite: 0 },
+      { model: "gemini-3.8-flash-lite-tts", input: 0.5, output: 6, cacheRead: 0, cacheWrite: 0 },
+      { model: "gemini-3.1-flash-tts-preview", input: 1, output: 20, cacheRead: 0, cacheWrite: 0 },
+      { model: "gemini-2.5-flash-preview-tts", input: 0.5, output: 10, cacheRead: 0, cacheWrite: 0 },
+      { model: "gemini-2.5-pro-preview-tts", input: 1, output: 20, cacheRead: 0, cacheWrite: 0 },
+      { model: "gemini-3.5-transcribe", input: 2, output: 12, cacheRead: 0, cacheWrite: 0 },
+      { model: "gemini-3.5-transcribe-live", input: 3.5, output: 21, cacheRead: 0, cacheWrite: 0 },
+      { model: "gemini-3.5-live-translate-preview", input: 3.5, output: 21, cacheRead: 0, cacheWrite: 0 },
+    ];
+    for (const c of cases) {
+      for (const model of [c.model, `google/${c.model}`, `custom:google/${c.model}[1m]`]) {
+        const row = {
+          provider: "antigravity", model,
+          input_tokens: 1_000_000, output_tokens: 1_000_000,
+          cache_read_tokens: 1_000_000, cache_write_tokens: 1_000_000,
+        };
+        expect(isModelPriced(model, row.provider), model).toBe(true);
+        expect(collectUnmappedModels([row]), model).toEqual([]);
+        expect(estimateCostBreakdown(row), model).toEqual({
+          input: c.input, output: c.output, cacheRead: c.cacheRead, cacheWrite: c.cacheWrite,
+        });
+        expect(estimateCost(row), model).toBeCloseTo(c.input + c.output + c.cacheRead + c.cacheWrite, 5);
+      }
+    }
+  });
+
+  it("resolves Antigravity display names and reasoning suffixes without changing rates", () => {
+    for (const [label, id, price] of [
+      ["Gemini 3.8 Flash", "gemini-3.8-flash", 0.75],
+      ["Gemini 3.5 Flash", "gemini-3.5-flash", 0.75],
+      ["Gemini 3.5 Flash-Lite", "gemini-3.5-flash-lite", 0.3],
+      ["Gemini 3.1 Pro", "gemini-3.1-pro", 2],
+      ["Gemini 4 Argon", "gemini-4-argon", 2],
+    ] as const) {
+      for (const model of [label, `${label} (High)`, `google/${label} (Low)`,
+        `${id}-minimal`, `antigravity:${id}-high`, `custom:google/${id}-low[1m]`]) {
+        expect(isModelPriced(model, "antigravity"), model).toBe(true);
+        expect(estimateCost({ ...zeroUsage, provider: "antigravity", model, input_tokens: 1_000_000 }), model).toBeCloseTo(price, 5);
+      }
+    }
+  });
+
+  it("does not guess Gemini variant or multimodal generation prices", () => {
+    for (const model of [
+      "gemini-3.8-flash-lite",
+      "gemini-3.8-flash-live",
+      "gemini-3.8-flash-preview",
+      "gemini-3.8-flash-ultra",
+      "gemini-3-8-flash",
+      "Gemini 3.8 Flash (Ultra)",
+      "Gemini 3.9 Flash (High)",
+      "gemini-3.8-flash[1m][2m]",
+      "gemini-3.1-pro-preview-extra",
+      "gemini-3.1-pro-image",
+      "gemini-2.5-pro-preview-05-06",
+      "gemini-2.5-flash-lite-preview-09-2025",
+      "gemini-2.5-flash-image",
+      "gemini-3-pro-image",
+      "gemini-nano-banana-2.1",
+      "gemini-3.1-flash-image",
+      "gemini-3.1-flash-lite-image",
+      "gemini-3.8-live",
+      "gemini-3.8-live-extended-thinking",
+      "gemini-3.1-flash-live-preview",
+      "gemini-2.5-flash-native-audio-preview-12-2025",
+      "gemini-omni-1.1-flash",
+      "gemini-omni-flash-preview",
+      "gemini-embedding-2",
+      "gemini-4-argon-fast",
+      "gemini-4-argon[1m][2m]",
+    ]) {
+      expect(isModelPriced(model, "antigravity"), model).toBe(false);
+      expect(estimateCost({ ...zeroUsage, provider: "antigravity", model, input_tokens: 1_000_000 }), model).toBe(0);
+    }
+  });
+
+  it("uses the current routed Flash rate for Cursor 3.5 and 3.6 aliases", () => {
+    for (const model of ["gemini-3.5-flash-high", "gemini-3.6-flash-high"]) {
+      expect(estimateCost({ ...zeroUsage, provider: "cursor", model,
+        input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_tokens: 1_000_000,
+      })).toBeCloseTo(0.75 + 3.75 + 0.075, 5);
     }
   });
 

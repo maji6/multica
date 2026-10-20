@@ -87,7 +87,10 @@ export function BuilderWorkspace({
   const runtimeSeed = useMemo(
     () => ({
       ready: sessionSettled,
-      runtimeId: session?.runtime_id || fallbackRuntimeId,
+      // An existing session with an empty runtime is authoritatively unbound.
+      // Only a just-created, not-yet-listed session may use the URL fallback.
+      runtimeId: session?.runtime_id ?? fallbackRuntimeId,
+      fallbackToFirstUsable: false,
     }),
     [fallbackRuntimeId, session?.runtime_id, sessionSettled],
   );
@@ -270,20 +273,18 @@ export function BuilderWorkspace({
     [builder.messages],
   );
 
-  // True once the draft's runtime is known to match the carrier's. Until then
-  // no selection may reach the server: RuntimePicker seeds an empty selection by
-  // calling onSelect itself, and in this pane onSelect rebinds the live
-  // conversation — so honouring that seed would move the conversation to
-  // whatever runtime sorts first, silently when idle and as "stop the current
-  // reply before switching runtime" when not.
-  const runtimeKnown = sessionSettled && draft.runtimeId.length > 0;
+  // An explicitly unbound carrier is resolved too: the user must be able to
+  // select a runtime and bind it, even when there is only one available.
+  // Automatic selection stays disabled for live sessions so a local draft
+  // cannot display a binding the server never committed.
+  const runtimeResolved = sessionSettled && (session !== undefined || fallbackRuntimeId.length > 0);
 
   useEffect(() => {
     onRuntimeLabel(selectedRuntime ? runtimeDisplayLabel(selectedRuntime) : null);
   }, [onRuntimeLabel, selectedRuntime]);
 
   const handleRuntimeSelect = async (runtimeId: string) => {
-    if (!runtimeKnown) return;
+    if (!runtimeResolved) return;
     if (!runtimeId || runtimeId === draft.runtimeId) return;
     const bound = await builder.switchRuntime(runtimeId);
     if (!bound) return;
@@ -397,7 +398,7 @@ export function BuilderWorkspace({
                   // Also locked while the carrier's runtime is unknown, so the
                   // picker cannot offer a switch it would refuse to perform.
                   runtimeSwitchInFlight={
-                    builder.switchingRuntime || !runtimeKnown
+                    builder.switchingRuntime || !runtimeResolved
                   }
                 />
               </div>

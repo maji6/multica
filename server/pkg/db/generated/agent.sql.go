@@ -5642,6 +5642,137 @@ func (q *Queries) ListChatFinalizeDeferredExpired(ctx context.Context, arg ListC
 	return items, nil
 }
 
+const listNonOwnerAgentsByRuntime = `-- name: ListNonOwnerAgentsByRuntime :many
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters FROM agent
+WHERE runtime_id = $1
+  AND owner_id IS DISTINCT FROM $2
+ORDER BY name ASC
+`
+
+type ListNonOwnerAgentsByRuntimeParams struct {
+	RuntimeID      pgtype.UUID `json:"runtime_id"`
+	RuntimeOwnerID pgtype.UUID `json:"runtime_owner_id"`
+}
+
+// Returns every agent bound to a runtime whose owner differs from its owner,
+// including hidden Builder execution carriers. This is the dependency plan shown before a public
+// runtime is made private: owner-owned agents keep their binding, while every
+// teammate-owned agent loses machine access.
+func (q *Queries) ListNonOwnerAgentsByRuntime(ctx context.Context, arg ListNonOwnerAgentsByRuntimeParams) ([]Agent, error) {
+	rows, err := q.db.Query(ctx, listNonOwnerAgentsByRuntime, arg.RuntimeID, arg.RuntimeOwnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Agent{}
+	for rows.Next() {
+		var i Agent
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Name,
+			&i.AvatarUrl,
+			&i.RuntimeMode,
+			&i.RuntimeConfig,
+			&i.Visibility,
+			&i.Status,
+			&i.MaxConcurrentTasks,
+			&i.OwnerID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Description,
+			&i.RuntimeID,
+			&i.Instructions,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
+			&i.CustomEnv,
+			&i.CustomArgs,
+			&i.McpConfig,
+			&i.Model,
+			&i.ThinkingLevel,
+			&i.ComposioToolkitAllowlist,
+			&i.PermissionMode,
+			&i.Kind,
+			&i.SystemKey,
+			&i.DisabledRuntimeSkills,
+			&i.ServiceTier,
+			&i.ConversationStarters,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNonOwnerAgentsByRuntimeForUpdate = `-- name: ListNonOwnerAgentsByRuntimeForUpdate :many
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters FROM agent
+WHERE runtime_id = $1
+  AND owner_id IS DISTINCT FROM $2
+ORDER BY id
+FOR UPDATE NOWAIT
+`
+
+type ListNonOwnerAgentsByRuntimeForUpdateParams struct {
+	RuntimeID      pgtype.UUID `json:"runtime_id"`
+	RuntimeOwnerID pgtype.UUID `json:"runtime_owner_id"`
+}
+
+// Runtime access-change locking serializes new bindings. NOWAIT avoids waiting
+// behind a writer that already holds an agent and needs the runtime row.
+func (q *Queries) ListNonOwnerAgentsByRuntimeForUpdate(ctx context.Context, arg ListNonOwnerAgentsByRuntimeForUpdateParams) ([]Agent, error) {
+	rows, err := q.db.Query(ctx, listNonOwnerAgentsByRuntimeForUpdate, arg.RuntimeID, arg.RuntimeOwnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Agent{}
+	for rows.Next() {
+		var i Agent
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Name,
+			&i.AvatarUrl,
+			&i.RuntimeMode,
+			&i.RuntimeConfig,
+			&i.Visibility,
+			&i.Status,
+			&i.MaxConcurrentTasks,
+			&i.OwnerID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Description,
+			&i.RuntimeID,
+			&i.Instructions,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
+			&i.CustomEnv,
+			&i.CustomArgs,
+			&i.McpConfig,
+			&i.Model,
+			&i.ThinkingLevel,
+			&i.ComposioToolkitAllowlist,
+			&i.PermissionMode,
+			&i.Kind,
+			&i.SystemKey,
+			&i.DisabledRuntimeSkills,
+			&i.ServiceTier,
+			&i.ConversationStarters,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingDelegatedFailureRecoveries = `-- name: ListPendingDelegatedFailureRecoveries :many
 SELECT recovery.id, recovery.issue_id, recovery.author_type, recovery.author_id, recovery.content, recovery.type, recovery.created_at, recovery.updated_at, recovery.parent_id, recovery.workspace_id, recovery.resolved_at, recovery.resolved_by_type, recovery.resolved_by_id, recovery.source_task_id, recovery.quick_action_id, recovery.via_plugin_id, recovery.revision, recovery.recovery_settled_at, recovery.deleted_at, recovery.suppressed_agent_ids
 FROM comment recovery

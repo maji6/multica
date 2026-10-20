@@ -905,8 +905,9 @@ func (r *RelayOutbound) confirmInbox(ctx context.Context, eventID string) relayP
 	// a window it configured elsewhere. A tighter caller deadline shortens the
 	// window; with no deadline the window stands.
 	deadline := time.Now().Add(window)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
+	callerDeadline, hasCallerDeadline := ctx.Deadline()
+	if hasCallerDeadline && callerDeadline.Before(deadline) {
+		deadline = callerDeadline
 	}
 	// The poll's OWN deadline ends the wait; the context is the backstop that
 	// keeps a claim store which ignores its deadline from outlasting it, so it
@@ -948,14 +949,15 @@ func (r *RelayOutbound) confirmInbox(ctx context.Context, eventID string) relayP
 			return relayUncertain
 		}
 	}
-	// A caller that ran out of time has nothing left to re-route WITH: its own
-	// local send would see the same expired context, so the honest answer is
-	// that the delivery is unknown -- nothing sent, nothing re-routed. In a
-	// production request the 5s budget leaves the 2s window plenty of room, so
-	// this is the backstop rather than the common exit.
-	if err := ctx.Err(); err != nil || settleBudgetSpent(ctx) {
+	// A deadline can pass before its cancellation callback updates Err. An
+	// expired caller must not fence the unconfirmed delivery or start a fallback.
+	callerErr := ctx.Err()
+	if callerErr == nil && hasCallerDeadline && !time.Now().Before(callerDeadline) {
+		callerErr = context.DeadlineExceeded
+	}
+	if callerErr != nil {
 		r.logger.WarnContext(ctx, "wecom relay: the caller's budget ran out before an inbox push's bot could be confirmed; not re-routing",
-			"error", err, "event_id", eventID)
+			"error", callerErr, "event_id", eventID)
 		return relayUncertain
 	}
 	won, err := r.dedupe.Claim(pollCtx, key, r.fenceTokenFor(eventID), r.dedupeTTL)

@@ -470,6 +470,9 @@
     "thread_nav_label": "Aller au fil de commentaires",
     "thread_nav_resolved_label": "{{title}} (résolu)",
     "thread_nav_reply_label": "{{author}} : {{title}}",
+    "thread_nav_show_replies_one": "Afficher {{count}} réponse",
+    "thread_nav_show_replies_other": "Afficher {{count}} réponses",
+    "thread_nav_hide_replies": "Masquer les réponses",
     "sidebar_tooltip": "Afficher ou masquer la barre latérale droite",
     "find": {
       "placeholder": "Rechercher dans la tâche...",
@@ -869,6 +872,7 @@
     "updated_ago": "Mis à jour {{time}}"
   },
   "actions": {
+    "rename_issue": "Renommer la tâche",
     "status": "Statut",
     "priority": "Priorité",
     "assignee": "Assigné à",
@@ -1749,5 +1753,8 @@
         }
       }
     }
+  },
+  "hover_card": {
+    "created_updated": "a créé {{created}} · mis à jour {{updated}}"
   }
 }

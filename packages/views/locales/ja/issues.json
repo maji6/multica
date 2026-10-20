@@ -465,6 +465,8 @@
     "thread_nav_label": "スレッドへ移動",
     "thread_nav_resolved_label": "{{title}}（解決済み）",
     "thread_nav_reply_label": "{{author}}：{{title}}",
+    "thread_nav_show_replies_other": "{{count}} 件の返信を表示",
+    "thread_nav_hide_replies": "返信を折りたたむ",
     "sidebar_tooltip": "右サイドバーの開閉",
     "find": {
       "placeholder": "タスク内を検索...",
@@ -828,6 +830,7 @@
     "updated_ago": "{{time}} に更新"
   },
   "actions": {
+    "rename_issue": "タスク名を変更",
     "status": "ステータス",
     "priority": "優先度",
     "assignee": "担当者",
@@ -1684,5 +1687,8 @@
         }
       }
     }
+  },
+  "hover_card": {
+    "created_updated": "{{created}}に作成 · {{updated}}に更新"
   }
 }

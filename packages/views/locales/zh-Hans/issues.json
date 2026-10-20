@@ -463,6 +463,8 @@
     "thread_nav_label": "快速跳转到讨论",
     "thread_nav_resolved_label": "{{title}}（已解决）",
     "thread_nav_reply_label": "{{author}}：{{title}}",
+    "thread_nav_show_replies_other": "展开 {{count}} 条回复",
+    "thread_nav_hide_replies": "收起回复",
     "sidebar_tooltip": "切换右侧边栏",
     "find": {
       "placeholder": "在任务中查找...",
@@ -828,6 +830,7 @@
     "updated_ago": "更新于 {{time}}"
   },
   "actions": {
+    "rename_issue": "重命名任务",
     "status": "状态",
     "priority": "优先级",
     "assignee": "负责人",
@@ -1684,5 +1687,8 @@
         }
       }
     }
+  },
+  "hover_card": {
+    "created_updated": "创建于 {{created}} · 更新于 {{updated}}"
   }
 }

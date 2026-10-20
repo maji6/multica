@@ -2,7 +2,7 @@ import type { ZodType } from "zod";
 import type { IssueWakeup, IssueWakeupInput, IssueWakeupSummaryRow, PausedWakeup, SystemWakeup, WakeupRun, WorkspaceSystemWakeup } from "../types/issue-wakeup";
 import type { WorkspaceWakeupPage, WorkspaceWakeupFilters } from "../types/issue-wakeup";
 import { WorkspaceWakeupPageSchema, IssueWakeupSchema, IssueWakeupSummaryRowSchema, PausedWakeupSchema, SystemWakeupSchema, WakeupRunSchema, WorkspaceSystemWakeupSchema } from "./schemas";
-import type { InboxFilters } from "../inbox/filter-store";
+import type { ArchivedInboxFilters } from "../inbox/filter-store";
 import type { ArchivedInboxPage, ArchivedInboxFacets } from "../types/inbox";
 import { configStore } from "../config";
 import type {
@@ -2399,6 +2399,24 @@ export class ApiClient {
     });
   }
 
+  // Confirmed counterpart to a public→private visibility PATCH. The PATCH
+  // returns a structured 409 when teammates still have bound agents or active
+  // tasks on the runtime; callers present that plan, then submit its exact
+  // agent/task ID sets here. The server rechecks both sets in one transaction.
+  async revokeRuntimeWorkspaceAccess(
+    runtimeId: string,
+    expectedNonownerAgentIds: string[],
+    expectedTaskIds: string[],
+  ): Promise<void> {
+    await this.fetch(`/api/runtimes/${runtimeId}/revoke-workspace-access`, {
+      method: "POST",
+      body: JSON.stringify({
+        expected_nonowner_agent_ids: expectedNonownerAgentIds,
+        expected_task_ids: expectedTaskIds,
+      }),
+    });
+  }
+
   // Custom runtime profiles (MUL-3284). All workspace-scoped: the caller
   // passes the workspace id the same way the runtimes list resolves it.
 
@@ -2896,7 +2914,7 @@ export class ApiClient {
     });
   }
 
-  private archivedInboxParams(filters: InboxFilters): URLSearchParams {
+  private archivedInboxParams(filters: ArchivedInboxFilters): URLSearchParams {
     const params = new URLSearchParams();
     if (filters.statuses.length) params.set("statuses", [...filters.statuses].sort().join(","));
     if (filters.priorities.length) params.set("priorities", [...filters.priorities].sort().join(","));
@@ -2905,7 +2923,7 @@ export class ApiClient {
     return params;
   }
 
-  async listArchivedInboxPage(filters: InboxFilters, options: {
+  async listArchivedInboxPage(filters: ArchivedInboxFilters, options: {
     cursor?: string | null; groupId?: string; signal?: AbortSignal;
   } = {}): Promise<ArchivedInboxPage> {
     const params = this.archivedInboxParams(filters);
@@ -2920,7 +2938,7 @@ export class ApiClient {
     return page;
   }
 
-  async getArchivedInboxFacets(filters: InboxFilters, signal?: AbortSignal): Promise<ArchivedInboxFacets> {
+  async getArchivedInboxFacets(filters: ArchivedInboxFilters, signal?: AbortSignal): Promise<ArchivedInboxFacets> {
     const raw = await this.fetch<unknown>(`/api/inbox/archived/facets?${this.archivedInboxParams(filters)}`, { signal });
     const facets = parseWithFallback<ArchivedInboxFacets | null>(raw, ArchivedInboxFacetsSchema, null, {
       endpoint: "GET /api/inbox/archived/facets",

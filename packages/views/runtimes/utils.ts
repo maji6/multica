@@ -270,6 +270,45 @@ const MODEL_PRICING: Record<
   "gpt-5.4":            { input: 2.50, output: 15,   cacheRead: 0.25,  cacheWrite: 2.50 },
   "gpt-5.3-codex":      { input: 1.75, output: 14,   cacheRead: 0.175, cacheWrite: 1.75 },
 
+  // -- Google: https://ai.google.dev/gemini-api/docs/pricing (2026-10-19).
+  //    Standard API-equivalent token estimates, not subscription charges.
+  //    Argon's intro rate ends 2026-11-30; Flash 3.6/3.8, Robotics and
+  //    3.8 TTS promotions end 2026-12-31. Update the static rows at expiry.
+  //    Google's deprecations page documents 3.5 Flash -> 3.6 and 3.7 -> 3.8
+  //    routing; those aliases use their destination's current rate.
+  //    Pro uses the <=200K request tier; totals lack per-request context
+  //    sizes. Flash/Lite use text/image/video input rates (audio can differ).
+  //    Cache writes estimate input processing only, excluding cache storage,
+  //    grounding and service-tier surcharges. Unsupported cache buckets are 0.
+  //    Speech-only SKUs have one input/output rate; mixed-modality Live,
+  //    Image, Omni and Embedding SKUs stay unmapped because aggregate tokens
+  //    cannot distinguish their rates. Mirror server/internal/metrics/pricing.go. --
+  "gemini-4-argon": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2 },
+  "gemini-3.8-flash": { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 },
+  "gemini-3.7-flash": { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 },
+  "gemini-3.6-flash": { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 },
+  "gemini-3.5-flash": { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 },
+  "gemini-3.5-flash-lite": { input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0.3 },
+  "gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cacheRead: 0.025, cacheWrite: 0.25 },
+  "gemini-3.1-pro": { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2 },
+  "gemini-3.1-pro-preview": { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2 },
+  "gemini-3.1-pro-preview-customtools": { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2 },
+  "gemini-3-flash": { input: 0.5, output: 3, cacheRead: 0.05, cacheWrite: 0.5 },
+  "gemini-3-flash-preview": { input: 0.5, output: 3, cacheRead: 0.05, cacheWrite: 0.5 },
+  "gemini-2.5-pro": { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 1.25 },
+  "gemini-2.5-flash": { input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0.3 },
+  "gemini-2.5-flash-lite": { input: 0.1, output: 0.4, cacheRead: 0.01, cacheWrite: 0.1 },
+  "gemini-robotics-er-2-preview": { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1 },
+  "gemini-robotics-er-2-streaming-preview": { input: 1, output: 5, cacheRead: 0, cacheWrite: 0 },
+  "gemini-3.8-flash-tts": { input: 0.5, output: 9, cacheRead: 0, cacheWrite: 0 },
+  "gemini-3.8-flash-lite-tts": { input: 0.5, output: 6, cacheRead: 0, cacheWrite: 0 },
+  "gemini-3.1-flash-tts-preview": { input: 1, output: 20, cacheRead: 0, cacheWrite: 0 },
+  "gemini-2.5-flash-preview-tts": { input: 0.5, output: 10, cacheRead: 0, cacheWrite: 0 },
+  "gemini-2.5-pro-preview-tts": { input: 1, output: 20, cacheRead: 0, cacheWrite: 0 },
+  "gemini-3.5-transcribe": { input: 2, output: 12, cacheRead: 0, cacheWrite: 0 },
+  "gemini-3.5-transcribe-live": { input: 3.5, output: 21, cacheRead: 0, cacheWrite: 0 },
+  "gemini-3.5-live-translate-preview": { input: 3.5, output: 21, cacheRead: 0, cacheWrite: 0 },
+
   // -- OpenAI: GPT-5 family (Codex CLI's default is gpt-5-codex; -codex/-mini/-nano variants priced per OpenAI tiers) --
   "gpt-5-codex":        { input: 1.25, output: 10,   cacheRead: 0.125, cacheWrite: 1.25 },
   "gpt-5-mini":         { input: 0.25, output: 2,    cacheRead: 0.025, cacheWrite: 0.25 },
@@ -454,8 +493,8 @@ const MODEL_PRICING: Record<
   "cursor/gemini-4-argon":       { input: 2,    output: 10,   cacheRead: 0.1,   cacheWrite: 0 },
   "cursor/gemini-3.8-flash":     { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 },
   "cursor/gemini-3.7-flash":     { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 },
-  "cursor/gemini-3.6-flash":     { input: 1.5,  output: 7.5,  cacheRead: 0.15,  cacheWrite: 0 },
-  "cursor/gemini-3.5-flash":     { input: 1.5,  output: 9,    cacheRead: 0.15,  cacheWrite: 0 },
+  "cursor/gemini-3.6-flash":     { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 },
+  "cursor/gemini-3.5-flash":     { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 },
   "cursor/gemini-3.1-pro":       { input: 2,    output: 12,   cacheRead: 0.2,   cacheWrite: 0 },
   "cursor/gemini-3-flash":       { input: 0.5,  output: 3,    cacheRead: 0.05,  cacheWrite: 0 },
   "cursor/kimi-k3":              { input: 3,    output: 15,   cacheRead: 0.3,   cacheWrite: 0 },
@@ -472,7 +511,7 @@ const MODEL_PRICING: Record<
 };
 
 // Resolve a model string to its pricing tier. Exact match, with four
-// tolerances applied in order:
+// tolerances applied in order (plus Gemini effort/display-name normalization):
 //
 //  1. Provider-prefixed IDs (`anthropic/claude-opus-4.7` from openclaw /
 //     opencode) — the `<provider>/` segment is routing metadata, not part
@@ -662,6 +701,15 @@ function canonicalCandidates(model: string): string[] {
   // pricing trade-off.
   const stripContextTag = (s: string) => s.replace(/\[[^\]]+\]$/, "");
 
+  // Antigravity's display labels and effort-suffixed IDs refer to the same
+  // Gemini SKU. Match only recognized shapes; never strip arbitrary variants.
+  const canonGemini = (s: string) => {
+    const display = /^gemini (\d+(?:\.\d+)?) (flash(?:-lite)?|pro|argon)(?: \((?:minimal|low|medium|high)\))?$/i.exec(s);
+    if (display) return `gemini-${display[1]}-${display[2]}`.toLowerCase();
+    const slug = /^(gemini-\d+(?:\.\d+)?-(?:flash(?:-lite)?|pro|argon))(?:-(?:minimal|low|medium|high))?$/i.exec(s);
+    return slug ? slug[1]!.toLowerCase() : s;
+  };
+
   const raw = model;
   const noProvider = stripProvider(raw);
   const dashed = canonAnthropic(noProvider);
@@ -675,6 +723,8 @@ function canonicalCandidates(model: string): string[] {
   push(stripDate(noProvider));
   push(stripDate(dashed));
   push(stripDate(noTag));
+  push(canonGemini(noTag));
+  push(canonGemini(stripDate(noTag)));
   canonicalCandidatesCache.set(model, out);
   return out;
 }

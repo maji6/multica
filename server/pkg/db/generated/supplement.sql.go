@@ -104,7 +104,7 @@ WITH locked_task AS MATERIALIZED (
       AND r.workspace_id = $4
       AND t.status = 'running'
       AND cap.capability = 'task-supplement-v1'
-      AND r.provider IN ('codex', 'claude')
+      AND r.provider IN ('codex', 'claude', 'cursor')
     FOR UPDATE OF t
 ), inserted AS (
     INSERT INTO task_supplement (
@@ -261,7 +261,7 @@ WITH locked_task AS MATERIALIZED (
       AND r.workspace_id = $3
       AND t.status = 'running'
       AND cap.capability = 'task-supplement-v1'
-      AND r.provider IN ('codex', 'claude', 'grok')
+      AND r.provider IN ('codex', 'claude', 'grok', 'cursor')
     FOR UPDATE OF t
 ), touched_issue AS (
     UPDATE issue i SET
@@ -736,7 +736,7 @@ WITH candidate AS MATERIALIZED (
     SELECT id, workspace_id, issue_id, 'task-supplement-v1'
     FROM candidate
     WHERE $2::boolean
-      AND provider IN ('codex', 'claude', 'grok')
+      AND provider IN ('codex', 'claude', 'grok', 'cursor')
       AND issue_id IS NOT NULL
     ON CONFLICT DO NOTHING
     RETURNING task_id

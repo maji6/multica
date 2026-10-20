@@ -210,6 +210,7 @@ export function AgentConfigurationPanel({
                 selectedRuntimeId={draft.runtimeId}
                 onSelect={handleRuntimeSelect}
                 disabled={runtimeLocked}
+                autoSelect={!onRuntimeSelect}
               />
               {/* A silently greyed-out picker is the worst version of this: the
                   user reaches for it exactly when the current runtime has gone

@@ -15,6 +15,7 @@ import {
   Network,
   Pin,
   PinOff,
+  Pencil,
   Plus,
   Trash2,
   Unlink,
@@ -129,6 +130,7 @@ export function IssueActionsMenuItems({
     togglePin,
     copyLink,
     openCreateSubIssue,
+    openRename,
     openSetParent,
     removeParent,
     openAddChild,
@@ -185,6 +187,16 @@ export function IssueActionsMenuItems({
 
   return (
     <>
+      {/* Rename leads the menu: it is the only entry that changes what the
+          issue *is* rather than a property of it, and on list/board rows it is
+          the only way to reach the title at all. */}
+      <P.Item onClick={openRename}>
+        <Pencil className="h-3.5 w-3.5" />
+        {t(($) => $.actions.rename_issue)}
+      </P.Item>
+
+      <P.Separator />
+
       {/* Status */}
       <P.Sub>
         <P.SubTrigger>

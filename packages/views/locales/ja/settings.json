@@ -141,6 +141,8 @@
     "field_name": "名前",
     "field_name_placeholder": "コードレビュー",
     "field_target": "実行者",
+    "no_target": "対象なし",
+    "no_target_hint": "誰もメンションせずにメッセージを投稿します。",
     "field_prompt": "プロンプト",
     "field_prompt_placeholder": "このタスクに関連するコードをレビューし、正確性とエッジケースを重点的に確認してください。",
     "prompt_hint": "そのまま送られます。タスクの内容は既に読めます。",
