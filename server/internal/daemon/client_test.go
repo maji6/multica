@@ -564,6 +564,13 @@ func TestTerminalReportsCarryRetiredSessionID(t *testing.T) {
 				return c.FailTask(context.Background(), "task-1", "boom", "", "/tmp/wd", "", "api_invalid_request", false, "POISONED-S", "")
 			},
 		},
+		{
+			name:     "cancel ack",
+			endpoint: "/api/daemon/tasks/task-1/cancel-ack",
+			call: func(c *Client) error {
+				return c.AckTaskCancelled(context.Background(), "task-1", TaskCancelAck{RetiredSessionID: "POISONED-S"})
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var body map[string]any

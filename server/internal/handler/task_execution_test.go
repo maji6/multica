@@ -40,20 +40,21 @@ func TestExecutionExitUserAuthenticatedClaimRoundTrip(t *testing.T) {
 			if proof == "" {
 				t.Fatal("user-authenticated claim did not provide an execution exit proof")
 			}
-			dbfx.Exec(t, "UPDATE agent_task_queue SET status='running', started_at=now() WHERE id=$1", taskID)
+			retiredSessionID := "ses_cancelled_" + mode
+			dbfx.Exec(t, "UPDATE agent_task_queue SET status='running', started_at=now(), session_id=$2 WHERE id=$1", taskID, retiredSessionID)
 			cancel := withChatTestWorkspaceCtx(t, withURLParam(newRequest(http.MethodPost, "/cancel", nil), "taskId", taskID))
 			var response AgentTaskResponse
 			testutil.Call(t, testHandler.CancelTaskByUser, cancel).Want(http.StatusOK).JSON(&response)
 			if response.ExecutionExitedAt != nil {
 				t.Fatal("cancellation alone asserted execution exit")
 			}
-			ack := func(value string, status int) {
-				req := withURLParam(newRequest(http.MethodPost, "/cancel-ack", map[string]any{}), "taskId", taskID)
+			ack := func(value string, body map[string]any, status int) {
+				req := withURLParam(newRequest(http.MethodPost, "/cancel-ack", body), "taskId", taskID)
 				req.Header.Set("X-Multica-Execution-Exit-Proof", value)
 				testutil.Call(t, testHandler.AckTaskCancelled, req).Want(status)
 			}
-			ack(proof+"tampered", http.StatusForbidden)
-			ack(proof, http.StatusOK)
+			ack(proof+"tampered", map[string]any{}, http.StatusForbidden)
+			ack(proof, map[string]any{"retired_session_id": retiredSessionID}, http.StatusOK)
 			task, err := testHandler.Queries.GetAgentTask(t.Context(), parseUUID(taskID))
 			if err != nil {
 				t.Fatal(err)
@@ -62,7 +63,10 @@ func TestExecutionExitUserAuthenticatedClaimRoundTrip(t *testing.T) {
 			if first == nil {
 				t.Fatal("valid claim proof did not record exit")
 			}
-			ack(proof, http.StatusOK)
+			if !task.RetiredSessionID.Valid || task.RetiredSessionID.String != retiredSessionID {
+				t.Fatalf("cancel acknowledgement retired session = %q, want %q", task.RetiredSessionID.String, retiredSessionID)
+			}
+			ack(proof, map[string]any{}, http.StatusOK)
 			task, err = testHandler.Queries.GetAgentTask(t.Context(), parseUUID(taskID))
 			if err != nil {
 				t.Fatal(err)
@@ -109,7 +113,7 @@ func TestExecutionExitReceiptRequiresDaemonAndRevokesTokens(t *testing.T) {
 		t.Fatal("foreign runtime recorded an exit")
 	}
 	other := withURLParam(newDaemonTokenRequest(http.MethodPost, "/cancel-ack", nil, testWorkspaceID, "other-runtime"), "taskId", f.taskID)
-	testutil.Call(t, testHandler.AckTaskCancelled, other).Want(http.StatusOK)
+	testutil.Call(t, testHandler.AckTaskCancelled, other).Want(http.StatusNotFound)
 	task, err = testHandler.Queries.GetAgentTask(t.Context(), parseUUID(f.taskID))
 	if err != nil {
 		t.Fatal(err)

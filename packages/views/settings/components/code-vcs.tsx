@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Copy, FolderGit2, GitBranch, MoreHorizontal, RefreshCw, Unplug, Webhook } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
+import { IconButton } from "@multica/ui/components/common/icon-button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -194,10 +195,10 @@ export function VCSConnectionRows() {
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
-                  <Button
+                  <IconButton
                     variant="ghost"
                     size="icon-sm"
-                    aria-label={t(($) => $.vcs.connection_actions, { url: c.instance_url })}
+                    label={t(($) => $.vcs.connection_actions, { url: c.instance_url })}
                   />
                 }
               >
@@ -478,15 +479,15 @@ function CopyField({
           value={value}
           className={mono ? "min-w-0 font-mono text-caption" : "min-w-0 text-caption"}
         />
-        <Button
+        <IconButton
           variant="outline"
           size="icon-sm"
           className="shrink-0"
           onClick={() => onCopy(value)}
-          aria-label={`${copyLabel}: ${label}`}
+          label={`${copyLabel}: ${label}`}
         >
           <Copy />
-        </Button>
+        </IconButton>
       </div>
     </div>
   );

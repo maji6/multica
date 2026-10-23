@@ -6577,11 +6577,20 @@ func TestHandleTask_AcksCancelOnPostRunStatusCheck(t *testing.T) {
 	t.Parallel()
 
 	var ackCalls atomic.Int64
+	var ackMu sync.Mutex
+	var ackBody map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/cancel-ack"):
 			ackCalls.Add(1)
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode cancel ack: %v", err)
+			}
+			ackMu.Lock()
+			ackBody = body
+			ackMu.Unlock()
 			w.WriteHeader(http.StatusOK)
 		case strings.HasSuffix(r.URL.Path, "/status"):
 			w.Header().Set("Content-Type", "application/json")
@@ -6602,7 +6611,7 @@ func TestHandleTask_AcksCancelOnPostRunStatusCheck(t *testing.T) {
 	}
 
 	d.runner = taskRunnerFunc(func(_ context.Context, _ Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
-		return TaskResult{Status: "completed"}, nil
+		return TaskResult{Status: "completed", RetiredSessionID: "session-retired-postrun"}, nil
 	})
 
 	task := Task{
@@ -6616,6 +6625,11 @@ func TestHandleTask_AcksCancelOnPostRunStatusCheck(t *testing.T) {
 
 	if got := ackCalls.Load(); got != 1 {
 		t.Fatalf("cancel-ack calls = %d, want 1", got)
+	}
+	ackMu.Lock()
+	defer ackMu.Unlock()
+	if got := ackBody["retired_session_id"]; got != "session-retired-postrun" {
+		t.Fatalf("cancel-ack retired_session_id = %v, want session-retired-postrun (body=%v)", got, ackBody)
 	}
 }
 
