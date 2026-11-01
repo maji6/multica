@@ -230,3 +230,44 @@ func TestExecutionExitProofBindsDispatch(t *testing.T) {
 		t.Fatal("stale dispatch recorded exit")
 	}
 }
+
+func TestExecutionExitHonorsProcessCleanup(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fail     bool
+		body     map[string]any
+		wantExit bool
+	}{
+		{name: "confirmed cancellation", body: map[string]any{"process_cleanup_confirmed": true}, wantExit: true},
+		{name: "unconfirmed cancellation", body: map[string]any{"process_cleanup_confirmed": false, "failure_reason": "cleanup_unconfirmed"}},
+		{name: "missing cancellation confirmation", body: map[string]any{}},
+		{name: "unconfirmed failure", fail: true, body: map[string]any{"error": "Background processes remain", "failure_reason": "cleanup_unconfirmed"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSupplementFixture(t, "pi", "running", true)
+			dbfx.Exec(t, "UPDATE agent_runtime SET daemon_id='cleanup-daemon' WHERE id=$1", f.runtimeID)
+			path := "/cancel-ack"
+			callback := testHandler.AckTaskCancelled
+			if tc.fail {
+				path = "/fail"
+				callback = testHandler.FailTask
+			} else {
+				dbfx.Exec(t, `UPDATE agent_task_queue SET status='cancelled', result='{"process_cleanup_pending":true}' WHERE id=$1`, f.taskID)
+			}
+			for range 2 {
+				req := withURLParam(newDaemonTokenRequest(http.MethodPost, path, tc.body, testWorkspaceID, "cleanup-daemon"), "taskId", f.taskID)
+				testutil.Call(t, callback, req).Want(http.StatusOK)
+				task, err := testHandler.Queries.GetAgentTask(t.Context(), parseUUID(f.taskID))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := taskToResponse(task, testWorkspaceID).ExecutionExitedAt != nil; got != tc.wantExit {
+					t.Fatalf("execution exit receipt = %v, want %v", got, tc.wantExit)
+				}
+				if !tc.wantExit && task.FailureReason.String != "cleanup_unconfirmed" {
+					t.Fatalf("cleanup fence lost: %s", task.FailureReason.String)
+				}
+			}
+		})
+	}
+}

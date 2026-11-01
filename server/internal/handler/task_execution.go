@@ -13,6 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 const executionExitProofHeader = "X-Multica-Execution-Exit-Proof"
@@ -35,6 +36,9 @@ func executionExitProof(task db.AgentTaskQueue, runtime db.AgentRuntime) string 
 // owner can acknowledge process exit and transcript drain. Revocation is atomic
 // with this receipt; an old dispatch must not revoke the new dispatch's token.
 func (h *Handler) recordExecutionExit(w http.ResponseWriter, r *http.Request, task *db.AgentTaskQueue) bool {
+	if task.FailureReason.Valid && task.FailureReason.String == taskfailure.ReasonProcessCleanupUnconfirmed.String() {
+		return true
+	}
 	proof := r.Header.Get(executionExitProofHeader)
 	daemonID := middleware.DaemonIDFromContext(r.Context())
 	if proof == "" && (daemonID == "" || !task.RuntimeID.Valid) {

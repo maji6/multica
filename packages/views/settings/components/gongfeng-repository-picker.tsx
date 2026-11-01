@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
+import { LoaderCircle, RefreshCw, Trash2 } from "@multica/ui/icons";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { gongfengRepositoriesOptions, vcsKeys } from "@multica/core/vcs";

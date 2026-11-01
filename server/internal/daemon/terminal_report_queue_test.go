@@ -615,6 +615,9 @@ func TestTerminalCancelProofSurvivesRestartAndHTTPReplay(t *testing.T) {
 		if body["retired_session_id"] != "session-retired-before-cancel" {
 			t.Error("replay lost retired session")
 		}
+		if body["process_cleanup_confirmed"] != true {
+			t.Error("replay lost process cleanup confirmation")
+		}
 		if _, ok := body["execution_exit_proof"]; ok {
 			t.Error("proof leaked into result body")
 		}
@@ -627,7 +630,8 @@ func TestTerminalCancelProofSurvivesRestartAndHTTPReplay(t *testing.T) {
 	before.terminalReportSend = func(context.Context, terminalTaskReport, []time.Duration) error { return errors.New("offline") }
 	ctx, cancel := context.WithCancel(withExecutionExitProof(context.Background(), "task-cancel", proof))
 	cancel()
-	if err := before.reportTerminalTask(ctx, terminalTaskReport{kind: terminalTaskReportCancel, taskID: "task-cancel", branchName: "agent/preserved", retiredSessionID: "session-retired-before-cancel"}); err == nil {
+	cleanupConfirmed := true
+	if err := before.reportTerminalTask(ctx, terminalTaskReport{kind: terminalTaskReportCancel, taskID: "task-cancel", branchName: "agent/preserved", retiredSessionID: "session-retired-before-cancel", processCleanupConfirmed: &cleanupConfirmed}); err == nil {
 		t.Fatal("expected offline failure")
 	}
 	after := New(cfg, logger)
