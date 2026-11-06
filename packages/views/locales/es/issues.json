@@ -566,6 +566,7 @@
     "jump_to_latest": "Ir a lo más reciente"
   },
   "activity": {
+    "property_changed": "actualizó una propiedad",
     "created": "creó esta tarea",
     "self_assigned": "se autoasignó esta tarea",
     "assigned_to": "la asignó a {{name}}",
