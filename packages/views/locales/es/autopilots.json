@@ -322,6 +322,7 @@
     "webhook_created_description": "Envía cualquier JSON por POST a la URL de abajo y la automatización se disparará. Cópiala ahora; también puedes encontrarla y rotarla en la página de detalle de la automatización.",
     "webhook_created_warning": "Trata esta URL como una contraseña. Cualquiera que la tenga puede disparar la automatización.",
     "webhook_created_done": "Hecho",
+    "event_filter_author_ids": "ID de autores: {{ids}}",
     "event_filter_label": "Filtros de eventos",
     "event_filter_docs_link_label": "Aprende cómo funcionan los filtros de eventos",
     "event_filter_event_placeholder": "p. ej., workflow_run",

@@ -125,6 +125,7 @@ function serializeEventFilters(filters: WebhookEventFilter[]): string {
       event: f.event,
       actions: f.actions ?? [],
       comment_first_lines: f.comment_first_lines ?? [],
+      author_ids: f.author_ids ?? [],
     })),
   );
 }

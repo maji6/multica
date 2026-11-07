@@ -2712,6 +2712,7 @@ export const AutopilotTriggerSchema = z.object({
     event: z.string(),
     actions: z.array(z.string()).optional(),
     comment_first_lines: z.array(z.string().min(1)).optional(),
+    author_ids: z.array(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)).optional(),
   }).loose()).nullish(),
 }).loose();
 

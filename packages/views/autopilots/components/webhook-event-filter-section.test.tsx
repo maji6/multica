@@ -85,9 +85,10 @@ describe("WebhookEventFilterSection", () => {
 
   it("shows comment first lines and preserves them when another filter is removed", () => {
     const onChange = vi.fn();
-    const commentFilter = { event: "issue_comment", actions: ["created"], comment_first_lines: ["【待确认】", "【请复核】"] };
+    const commentFilter = { event: "issue_comment", actions: ["created"], comment_first_lines: ["【待确认】", "【请复核】"], author_ids: [101, 202] };
     renderWithI18n(<WebhookEventFilterSection filters={[commentFilter, { event: "issues" }]} onChange={onChange} />);
     expect(screen.getByText("【待确认】 / 【请复核】")).toBeInTheDocument();
+    expect(screen.getByText("Author IDs: 101, 202")).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "Remove filter" })[1]!);
     expect(onChange).toHaveBeenCalledWith([commentFilter]);
   });

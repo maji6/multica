@@ -91,6 +91,8 @@ Webhook 请求的约束：
 
 GitHub 的 `issue_comment` 还可以通过触发器 API 设置 `comment_first_lines`，例如 `{"event":"issue_comment","actions":["created"],"comment_first_lines":["【请复核】"]}`。只匹配评论首行，忽略首行两端空白；正文里引用这句话不会命中。不匹配的评论在创建 Agent 运行之前就被忽略。省略该字段或传空列表则不限制评论正文；同一事件若命中其他过滤行，仍会运行。
 
+GitHub 的 `issue_comment` 和 `pull_request_review` 可设置 `author_ids: [12345]`，只接受指定 GitHub 用户或机器人 ID 的评论或复核。检查的是 `comment.user.id` 或 `review.user.id`，不采信正文自报的角色，也不使用 webhook 的发送者身份。作者缺失或格式错误时不匹配。同一行的作者、动作和首行条件必须同时满足，不同行之间任意一行满足即可。省略 `author_ids` 或传空列表表示不限制作者。编辑器会显示已配置的作者 ID，并在修改其他过滤条件时保留它们。
+
 例如，事件名填写 `workflow_run`，Actions 填写 `completed, failed`，只会接收这两类 `workflow_run` 结果。Multica 会从常见请求头和 payload 中识别事件与 action，包括 GitHub 的 `X-GitHub-Event` 和 body 中的 `action`。
 
 ### 保护 Webhook URL

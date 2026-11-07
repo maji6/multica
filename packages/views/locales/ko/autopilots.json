@@ -322,6 +322,7 @@
     "webhook_created_description": "아래 URL로 JSON을 POST하면 오토파일럿이 실행됩니다. 지금 복사해 두세요. 나중에 오토파일럿 상세 페이지에서도 확인하고 재발급할 수 있습니다.",
     "webhook_created_warning": "이 URL은 비밀번호처럼 다루세요. URL을 가진 사람은 누구나 오토파일럿을 실행할 수 있습니다.",
     "webhook_created_done": "완료",
+    "event_filter_author_ids": "작성자 ID: {{ids}}",
     "event_filter_label": "이벤트 필터",
     "event_filter_docs_link_label": "이벤트 필터 작동 방식 알아보기",
     "event_filter_event_placeholder": "예: workflow_run",

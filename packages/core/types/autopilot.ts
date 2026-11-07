@@ -68,6 +68,7 @@ export interface WebhookEventFilter {
   event: string;
   actions?: string[];
   comment_first_lines?: string[];
+  author_ids?: number[];
 }
 
 export interface AutopilotSubscriber {

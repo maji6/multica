@@ -93,6 +93,8 @@ For example, with `workflow_run` as the event name and `completed, failed` as th
 
 For GitHub `issue_comment` events, the trigger API also accepts `comment_first_lines`, for example `{"event":"issue_comment","actions":["created"],"comment_first_lines":["[Review requested]"]}`. Only an exact first-line match, ignoring surrounding whitespace, is accepted; quoting that line later in a comment does not match. Non-matching comments are recorded as ignored before an agent run is created. Omit the field or use an empty list to accept any comment body. Other matching filter rows can still accept the event.
 
+For GitHub `issue_comment` and `pull_request_review`, add `author_ids: [12345]` to restrict a row to specific GitHub user or bot IDs. It checks `comment.user.id` or `review.user.id`, not a role written in the body or the webhook sender. Missing or malformed authors do not match. Author, action, and first-line restrictions in one row must all match; different rows are alternatives. Omitting `author_ids` or using an empty list leaves the author unrestricted. The editor displays configured author IDs and preserves them when editing other filters.
+
 ### Protect the webhook URL
 
 <Callout type="warning">
