@@ -322,7 +322,6 @@
     "webhook_created_description": "下の URL に任意の JSON を POST すると、オートパイロットが実行されます。今コピーしておいてください — オートパイロットの詳細ページでも確認・再生成できます。",
     "webhook_created_warning": "この URL はパスワードのように扱ってください。URL を持っている人は誰でもオートパイロットを実行できます。",
     "webhook_created_done": "完了",
-    "event_filter_author_ids": "投稿者 ID: {{ids}}",
     "event_filter_label": "イベントフィルター",
     "event_filter_docs_link_label": "イベントフィルターの仕組みを学ぶ",
     "event_filter_event_placeholder": "例: workflow_run",

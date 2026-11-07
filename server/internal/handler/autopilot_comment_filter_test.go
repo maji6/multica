@@ -62,7 +62,7 @@ func TestWebhookHandler_CommentFilterBeforeAdmission(t *testing.T) {
 	agentID := createWebhookTestAgent(t, "CommentFilter Agent")
 	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
 	trig := createWebhookTriggerWithFilters(t, apID, []WebhookEventFilter{
-		{Event: "issue_comment", Actions: []string{"created"}, CommentFirstLines: []string{"【待确认】"}, AuthorIDs: []int64{303}},
+		{Event: "issue_comment", Actions: []string{"created"}, CommentFirstLines: []string{"【待确认】"}},
 	})
 	row, err := testHandler.Queries.GetAutopilotTrigger(context.Background(), parseUUID(trig.ID))
 	if err != nil {
@@ -74,9 +74,6 @@ func TestWebhookHandler_CommentFilterBeforeAdmission(t *testing.T) {
 	}
 	if len(trig.EventFilters) != 1 || len(trig.EventFilters[0].CommentFirstLines) != 1 {
 		t.Fatal("API response dropped the comment filter")
-	}
-	if len(persisted[0].AuthorIDs) != 1 || persisted[0].AuthorIDs[0] != 303 || len(trig.EventFilters[0].AuthorIDs) != 1 || trig.EventFilters[0].AuthorIDs[0] != 303 {
-		t.Fatal("author filter did not survive persistence and API response")
 	}
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{
 		"action": "created", "comment": map[string]any{"body": "【执行回执】\n已开工"},
@@ -93,18 +90,7 @@ func TestWebhookHandler_CommentFilterBeforeAdmission(t *testing.T) {
 		t.Fatalf("ignored receipt created a run: count=%d err=%v", len(runs), err)
 	}
 	w = postWebhook(t, *trig.WebhookToken, map[string]any{
-		"action": "created", "comment": map[string]any{"body": "【待确认】\n角色：开发", "user": map[string]any{"id": 101}},
-		"sender": map[string]any{"id": 303},
-	}, map[string]string{"X-GitHub-Event": "issue_comment"})
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || w.Code != http.StatusOK || response["status"] != "ignored" {
-		t.Fatalf("wrong author was not filtered: %s", w.Body.String())
-	}
-	runs, err = testHandler.Queries.ListAutopilotRuns(context.Background(), db.ListAutopilotRunsParams{AutopilotID: parseUUID(apID), Limit: 10})
-	if err != nil || len(runs) != 0 {
-		t.Fatalf("wrong author created a run: count=%d err=%v", len(runs), err)
-	}
-	w = postWebhook(t, *trig.WebhookToken, map[string]any{
-		"action": "created", "comment": map[string]any{"body": "【待确认】\n问题", "user": map[string]any{"id": 303}},
+		"action": "created", "comment": map[string]any{"body": "【待确认】\n问题"},
 	}, map[string]string{"X-GitHub-Event": "issue_comment"})
 	requireAcceptedWebhookResponse(t, w)
 }

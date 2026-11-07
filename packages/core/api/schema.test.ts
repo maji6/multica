@@ -28,7 +28,7 @@ describe("ApiClient schema fallback", () => {
     const trigger = {
       id: "tr-1",
       kind: "webhook",
-      event_filters: [{ event: "issue_comment", actions: ["created"], comment_first_lines: ["【待确认】"], author_ids: [303] }],
+      event_filters: [{ event: "issue_comment", actions: ["created"], comment_first_lines: ["【待确认】"] }],
     };
 
     it("preserves comment filters and older responses without them", async () => {
@@ -42,12 +42,6 @@ describe("ApiClient schema fallback", () => {
     it("rejects malformed filters instead of turning them into an unrestricted filter", async () => {
       const client = new ApiClient("https://api.example.test");
       stubFetchJson({ ...trigger, event_filters: [{ event: "issue_comment", comment_first_lines: "【待确认】" }] });
-      await expect(client.updateAutopilotTrigger("ap-1", "tr-1", { enabled: true })).rejects.toThrow("Malformed response");
-    });
-
-    it.each([["303"], [0], [-1], [1.5], [Number.MAX_SAFE_INTEGER + 1]])("rejects malformed author IDs %j", async (...author_ids) => {
-      const client = new ApiClient("https://api.example.test");
-      stubFetchJson({ ...trigger, event_filters: [{ event: "issue_comment", author_ids }] });
       await expect(client.updateAutopilotTrigger("ap-1", "tr-1", { enabled: true })).rejects.toThrow("Malformed response");
     });
   });

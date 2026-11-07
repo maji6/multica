@@ -322,7 +322,6 @@
     "webhook_created_description": "POST any JSON to the URL below and the autopilot will fire. Copy it now — you can also find and rotate it on the autopilot's detail page.",
     "webhook_created_warning": "Treat this URL like a password. Anyone who has it can trigger the autopilot.",
     "webhook_created_done": "Done",
-    "event_filter_author_ids": "Author IDs: {{ids}}",
     "event_filter_label": "Event filters",
     "event_filter_docs_link_label": "Learn how event filters work",
     "event_filter_event_placeholder": "e.g. workflow_run",

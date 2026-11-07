@@ -322,7 +322,6 @@
     "webhook_created_description": "向下方的 URL POST 任意 JSON 即可触发该自动化。请立即复制——之后也能在自动化详情页查看或重新生成。",
     "webhook_created_warning": "请把该 URL 当作密码对待，任何拿到它的人都能触发该自动化。",
     "webhook_created_done": "完成",
-    "event_filter_author_ids": "作者 ID：{{ids}}",
     "event_filter_label": "事件过滤",
     "event_filter_docs_link_label": "了解事件过滤的工作方式",
     "event_filter_event_placeholder": "例如 workflow_run",

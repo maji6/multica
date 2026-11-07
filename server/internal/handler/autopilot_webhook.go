@@ -638,7 +638,6 @@ type WebhookEventFilter struct {
 	Event             string   `json:"event"`
 	Actions           []string `json:"actions,omitempty"`
 	CommentFirstLines []string `json:"comment_first_lines,omitempty"`
-	AuthorIDs         []int64  `json:"author_ids,omitempty"`
 }
 
 // validateWebhookEventFilters enforces the contract at the HTTP boundary so
@@ -656,14 +655,6 @@ func validateWebhookEventFilters(filters []WebhookEventFilter) error {
 		}
 		if len(f.CommentFirstLines) > 0 && f.Event != "issue_comment" {
 			return fmt.Errorf("event_filters[%d].comment_first_lines requires issue_comment", i)
-		}
-		if len(f.AuthorIDs) > 0 && f.Event != "issue_comment" && f.Event != "pull_request_review" {
-			return fmt.Errorf("event_filters[%d].author_ids requires issue_comment or pull_request_review", i)
-		}
-		for j, id := range f.AuthorIDs {
-			if id <= 0 || id > 9007199254740991 {
-				return fmt.Errorf("event_filters[%d].author_ids[%d] must be a positive safe integer", i, j)
-			}
 		}
 		for j, line := range f.CommentFirstLines {
 			if strings.TrimSpace(line) == "" || strings.ContainsAny(line, "\r\n") {
@@ -721,39 +712,6 @@ func webhookEventAllowedByTriggerScope(eventFilters []byte, envelope WebhookEnve
 	for _, f := range filters {
 		if f.Event != eventName {
 			continue
-		}
-		if len(f.AuthorIDs) > 0 {
-			var payload struct {
-				Comment struct {
-					User struct{ ID int64 } `json:"user"`
-				} `json:"comment"`
-				Review struct {
-					User struct{ ID int64 } `json:"user"`
-				} `json:"review"`
-			}
-			if json.Unmarshal(envelope.EventPayload, &payload) != nil {
-				continue
-			}
-			var authorID int64
-			switch eventName {
-			case "issue_comment":
-				authorID = payload.Comment.User.ID
-			case "pull_request_review":
-				authorID = payload.Review.User.ID
-			default:
-				continue
-			}
-			// The sender can dismiss another person's review; use its author.
-			matched := false
-			for _, allowed := range f.AuthorIDs {
-				if authorID > 0 && authorID == allowed {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
 		}
 		if len(f.CommentFirstLines) > 0 {
 			var payload struct {
