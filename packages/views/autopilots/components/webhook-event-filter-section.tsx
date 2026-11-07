@@ -78,6 +78,11 @@ export function WebhookEventFilterSection({
                   : {f.actions.join(", ")}
                 </span>
               )}
+              {f.comment_first_lines && f.comment_first_lines.length > 0 && (
+                <span className="min-w-0 break-words text-muted-foreground">
+                  {f.comment_first_lines.join(" / ")}
+                </span>
+              )}
               <TooltipHint label={t(($) => $.dialog.event_filter_remove_label)}>
                 <button
                   type="button"

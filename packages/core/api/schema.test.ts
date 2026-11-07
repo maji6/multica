@@ -24,6 +24,28 @@ afterEach(() => {
 // app in past incidents. The contract is: a malformed response degrades to
 // an empty/safe shape, never throws into React.
 describe("ApiClient schema fallback", () => {
+  describe("autopilot comment filters", () => {
+    const trigger = {
+      id: "tr-1",
+      kind: "webhook",
+      event_filters: [{ event: "issue_comment", actions: ["created"], comment_first_lines: ["【待确认】"] }],
+    };
+
+    it("preserves comment filters and older responses without them", async () => {
+      const client = new ApiClient("https://api.example.test");
+      stubFetchJson(trigger);
+      expect(await client.updateAutopilotTrigger("ap-1", "tr-1", { event_filters: trigger.event_filters })).toEqual(trigger);
+      stubFetchJson({ id: "tr-1", kind: "webhook" });
+      expect(await client.createAutopilotTrigger("ap-1", { kind: "webhook" })).toEqual({ id: "tr-1", kind: "webhook" });
+    });
+
+    it("rejects malformed filters instead of turning them into an unrestricted filter", async () => {
+      const client = new ApiClient("https://api.example.test");
+      stubFetchJson({ ...trigger, event_filters: [{ event: "issue_comment", comment_first_lines: "【待确认】" }] });
+      await expect(client.updateAutopilotTrigger("ap-1", "tr-1", { enabled: true })).rejects.toThrow("Malformed response");
+    });
+  });
+
   describe("workspace pin responses", () => {
     it("defaults missing or malformed pinned_at to null and falls back on malformed lists", async () => {
       const ws = { id: "ws-1", name: "One", slug: "one", description: null, context: null, settings: {}, repos: [], issue_prefix: "ONE", avatar_url: null, created_at: "2026-01-01", updated_at: "2026-01-01" };

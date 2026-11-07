@@ -121,7 +121,11 @@ const OUTPUT_MODE_ICONS: Record<AutopilotExecutionMode, typeof FilePlus2> = {
 // so omitted-vs-explicit-empty doesn't show as a phantom change.
 function serializeEventFilters(filters: WebhookEventFilter[]): string {
   return JSON.stringify(
-    filters.map((f) => ({ event: f.event, actions: f.actions ?? [] })),
+    filters.map((f) => ({
+      event: f.event,
+      actions: f.actions ?? [],
+      comment_first_lines: f.comment_first_lines ?? [],
+    })),
   );
 }
 

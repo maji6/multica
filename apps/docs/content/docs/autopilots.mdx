@@ -91,6 +91,8 @@ When one source sends several event types, add event filters to the trigger. Eac
 
 For example, with `workflow_run` as the event name and `completed, failed` as the actions, only those two kinds of `workflow_run` results are accepted. Multica recognizes the event and action from common request headers and payload fields, including GitHub's `X-GitHub-Event` and the `action` field in the body.
 
+For GitHub `issue_comment` events, the trigger API also accepts `comment_first_lines`, for example `{"event":"issue_comment","actions":["created"],"comment_first_lines":["[Review requested]"]}`. Only an exact first-line match, ignoring surrounding whitespace, is accepted; quoting that line later in a comment does not match. Non-matching comments are recorded as ignored before an agent run is created. Omit the field or use an empty list to accept any comment body. Other matching filter rows can still accept the event.
+
 ### Protect the webhook URL
 
 <Callout type="warning">

@@ -333,6 +333,8 @@ import {
   IssueTableGroupsResponseSchema,
   IssueTableRowsResponseSchema,
   ListAutopilotsResponseSchema,
+  AutopilotTriggerSchema,
+  GetAutopilotResponseSchema,
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
   AutopilotRunSchema,
   AutopilotQuotaUsageSchema,
@@ -580,6 +582,14 @@ export interface LoginResponse {
 
 function parseSearchIndexResponse<T>(raw: unknown, schema: ZodType, endpoint: string): T {
   const parsed = parseWithFallback<T | null>(raw, schema, null, { endpoint });
+  if (parsed === null) throw new Error(`Malformed response from ${endpoint}`);
+  return parsed;
+}
+
+function parseAutopilotResponse<T>(raw: unknown, schema: ZodType, endpoint: string): T {
+  // Trigger responses contain webhook credentials. Invalid filters must not
+  // become empty filters that an edit would write back as "accept all".
+  const parsed = parseWithFallback<T | null>(raw, schema, null, { endpoint, sensitive: true });
   if (parsed === null) throw new Error(`Malformed response from ${endpoint}`);
   return parsed;
 }
@@ -4920,7 +4930,8 @@ export class ApiClient {
   }
 
   async getAutopilot(id: string): Promise<GetAutopilotResponse> {
-    return this.fetch(`/api/autopilots/${id}`);
+    const raw = await this.fetch<unknown>(`/api/autopilots/${id}`);
+    return parseAutopilotResponse(raw, GetAutopilotResponseSchema, "GET /api/autopilots/:id");
   }
 
   async createAutopilot(data: CreateAutopilotRequest): Promise<Autopilot> {
@@ -5006,17 +5017,19 @@ export class ApiClient {
   }
 
   async createAutopilotTrigger(autopilotId: string, data: CreateAutopilotTriggerRequest): Promise<AutopilotTrigger> {
-    return this.fetch(`/api/autopilots/${autopilotId}/triggers`, {
+    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/triggers`, {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseAutopilotResponse(raw, AutopilotTriggerSchema, "POST /api/autopilots/:id/triggers");
   }
 
   async updateAutopilotTrigger(autopilotId: string, triggerId: string, data: UpdateAutopilotTriggerRequest): Promise<AutopilotTrigger> {
-    return this.fetch(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, {
+    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     });
+    return parseAutopilotResponse(raw, AutopilotTriggerSchema, "PATCH /api/autopilots/:id/triggers/:triggerId");
   }
 
   async deleteAutopilotTrigger(autopilotId: string, triggerId: string): Promise<void> {
@@ -5040,10 +5053,11 @@ export class ApiClient {
     autopilotId: string,
     triggerId: string,
   ): Promise<AutopilotTrigger> {
-    return this.fetch(
+    const raw = await this.fetch<unknown>(
       `/api/autopilots/${autopilotId}/triggers/${triggerId}/rotate-webhook-token`,
       { method: "POST" },
     );
+    return parseAutopilotResponse(raw, AutopilotTriggerSchema, "POST /api/autopilots/:id/triggers/:triggerId/rotate-webhook-token");
   }
 
   // Webhook deliveries — list is slim (no raw_body / selected_headers /
