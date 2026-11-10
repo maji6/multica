@@ -1293,8 +1293,18 @@ describe("ApiClient", () => {
   });
 
   it("uses the expected HTTP contract for autopilot endpoints", async () => {
-    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
-      new Response(JSON.stringify({ autopilots: [], runs: [], total: 0 }), {
+    const autopilot = {
+      id: "ap-1", workspace_id: "ws-1", title: "Daily triage",
+      assignee_id: "agent-1", status: "active", execution_mode: "create_issue",
+      created_by_type: "member", created_by_id: "user-1",
+      created_at: "2026-11-10T00:00:00Z", updated_at: "2026-11-10T00:00:00Z",
+    };
+    const fetchMock = vi.fn().mockImplementation((url: string) => Promise.resolve(
+      new Response(JSON.stringify(
+        url.includes("/triggers") ? { id: "tr-1", event_filters: [] }
+          : url.endsWith("/autopilots/ap-1") ? { autopilot, triggers: [] }
+            : { autopilots: [], runs: [], total: 0 },
+      ), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }),
