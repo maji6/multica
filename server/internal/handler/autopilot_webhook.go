@@ -635,8 +635,9 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 // WebhookEventFilter declares one event and an optional list of actions.
 // A nil/empty Actions means "any action" for this event.
 type WebhookEventFilter struct {
-	Event   string   `json:"event"`
-	Actions []string `json:"actions,omitempty"`
+	Event             string   `json:"event"`
+	Actions           []string `json:"actions,omitempty"`
+	CommentFirstLines []string `json:"comment_first_lines,omitempty"`
 }
 
 // validateWebhookEventFilters enforces the contract at the HTTP boundary so
@@ -650,6 +651,14 @@ func validateWebhookEventFilters(filters []WebhookEventFilter) error {
 		for j, a := range f.Actions {
 			if strings.TrimSpace(a) == "" {
 				return fmt.Errorf("event_filters[%d].actions[%d] must not be empty", i, j)
+			}
+		}
+		if len(f.CommentFirstLines) > 0 && f.Event != "issue_comment" {
+			return fmt.Errorf("event_filters[%d].comment_first_lines requires issue_comment", i)
+		}
+		for j, line := range f.CommentFirstLines {
+			if strings.TrimSpace(line) == "" || strings.ContainsAny(line, "\r\n") {
+				return fmt.Errorf("event_filters[%d].comment_first_lines[%d] must be one non-empty line", i, j)
 			}
 		}
 	}
@@ -703,6 +712,27 @@ func webhookEventAllowedByTriggerScope(eventFilters []byte, envelope WebhookEnve
 	for _, f := range filters {
 		if f.Event != eventName {
 			continue
+		}
+		if len(f.CommentFirstLines) > 0 {
+			var payload struct {
+				Comment struct {
+					Body string `json:"body"`
+				} `json:"comment"`
+			}
+			if json.Unmarshal(envelope.EventPayload, &payload) != nil {
+				continue
+			}
+			firstLine, _, _ := strings.Cut(payload.Comment.Body, "\n")
+			matched := false
+			for _, allowed := range f.CommentFirstLines {
+				if strings.TrimSpace(firstLine) == strings.TrimSpace(allowed) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
 		}
 		if len(f.Actions) == 0 {
 			return true

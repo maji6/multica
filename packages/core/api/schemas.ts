@@ -2765,6 +2765,20 @@ export const EMPTY_LIST_AUTOPILOTS_RESPONSE = {
   total: 0,
 };
 
+export const AutopilotTriggerSchema = z.object({
+  id: z.string(),
+  event_filters: z.array(z.object({
+    event: z.string(),
+    actions: z.array(z.string()).optional(),
+    comment_first_lines: z.array(z.string().min(1)).optional(),
+  }).loose()).nullish(),
+}).loose();
+
+export const GetAutopilotResponseSchema = z.object({
+  autopilot: AutopilotListItemSchema,
+  triggers: z.array(AutopilotTriggerSchema),
+}).loose();
+
 // Autopilot run (POST /trigger, GET /runs). Consumed by the "run now" flow,
 // which branches on `status` to avoid a false-success toast (MUL-4525), so the
 // response must be schema-parsed. `reason_code` is an additive, stable

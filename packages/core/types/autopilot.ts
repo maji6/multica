@@ -67,6 +67,7 @@ export interface Autopilot {
 export interface WebhookEventFilter {
   event: string;
   actions?: string[];
+  comment_first_lines?: string[];
 }
 
 export interface AutopilotSubscriber {
