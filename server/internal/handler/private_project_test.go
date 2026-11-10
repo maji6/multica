@@ -354,6 +354,7 @@ func TestPrivateProjectTaskTranscriptAndRunHistory(t *testing.T) {
 		"status":     "completed",
 		"result":     testutil.Raw(`'{"output":"secret result"}'::jsonb`),
 	})
+	dbfx.Exec(t, `UPDATE agent_task_queue SET context = jsonb_build_object('execution_exit_task_id', id::text, 'execution_exited_at', '2026-11-10T00:00:00Z') WHERE id = $1`, taskID)
 
 	transcript := func(userID string) int {
 		req := withURLParam(asUser(newRequest(http.MethodGet, "/api/tasks/"+taskID+"/messages", nil), userID), "taskId", taskID)
@@ -382,11 +383,17 @@ func TestPrivateProjectTaskTranscriptAndRunHistory(t *testing.T) {
 		return AgentTaskResponse{}
 	}
 	hidden := history(f.outsider)
+	if hidden.ExecutionExitedAt != nil || hidden.ExecutionExitProof != "" {
+		t.Fatal("restricted run exposed execution receipt")
+	}
 	if !hidden.Restricted || hidden.IssueID != "" || hidden.Result != nil || hidden.Status != "completed" {
 		t.Errorf("outsider run = restricted %v issue %q result %v status %q; want a redacted completed run",
 			hidden.Restricted, hidden.IssueID, hidden.Result, hidden.Status)
 	}
 	visible := history(f.insider)
+	if visible.ExecutionExitedAt == nil || *visible.ExecutionExitedAt != "2026-11-10T00:00:00Z" {
+		t.Fatal("visible run lost execution receipt")
+	}
 	if visible.Restricted || visible.IssueID != f.secretIssue {
 		t.Errorf("insider run = restricted %v issue %q", visible.Restricted, visible.IssueID)
 	}

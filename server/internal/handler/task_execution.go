@@ -18,6 +18,24 @@ import (
 
 const executionExitProofHeader = "X-Multica-Execution-Exit-Proof"
 
+// TaskExecutionReceipt is embedded to preserve the flat task API contract.
+type TaskExecutionReceipt struct {
+	ExecutionExitProof string  `json:"execution_exit_proof,omitempty"`
+	ExecutionExitedAt  *string `json:"execution_exited_at,omitempty"`
+}
+
+func taskExecutionReceipt(task db.AgentTaskQueue) TaskExecutionReceipt {
+	var exit struct {
+		TaskID string `json:"execution_exit_task_id"`
+		At     string `json:"execution_exited_at"`
+	}
+	_ = json.Unmarshal(task.Context, &exit)
+	if exit.TaskID == uuidToString(task.ID) && exit.At != "" && (task.Status == "completed" || task.Status == "failed" || task.Status == "cancelled") {
+		return TaskExecutionReceipt{ExecutionExitedAt: &exit.At}
+	}
+	return TaskExecutionReceipt{}
+}
+
 // The proof is delivered only to the claiming daemon, never to the agent or
 // public task API. Binding it to the dispatch prevents a previous claimant's
 // delayed callback from acknowledging a new execution of the same task.

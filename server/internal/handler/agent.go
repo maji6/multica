@@ -397,8 +397,6 @@ type TaskCancellationActor struct {
 }
 
 type AgentTaskResponse struct {
-	ExecutionExitProof string  `json:"execution_exit_proof,omitempty"`
-	ExecutionExitedAt  *string `json:"execution_exited_at,omitempty"`
 	// Restricted marks a run on an issue in a private project the caller
 	// cannot see (MUL-8472): only identity, status, timing and usage remain.
 	Restricted bool `json:"restricted,omitempty"`
@@ -525,6 +523,7 @@ type AgentTaskResponse struct {
 	NewCommentsSince      string                 `json:"new_comments_since,omitempty"`      // RFC3339 anchor (last run's started_at) the count is measured from; omitempty so old daemons ignore it. Suppressed with the count when the delta is zero — NewCommentsDeltaKnown, not this field, is what says the server looked
 
 	ProcessCleanupCapability string `json:"process_cleanup_capability,omitempty"`
+	TaskExecutionReceipt
 
 	// MUL-8218: set only when the trigger comment was edited AFTER the run
 	// whose session this claim resumes had started, so that session's history
@@ -914,17 +913,8 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	if t.HandoffNote.Valid {
 		handoffNote = t.HandoffNote.String
 	}
-	var exit struct {
-		TaskID string `json:"execution_exit_task_id"`
-		At     string `json:"execution_exited_at"`
-	}
-	_ = json.Unmarshal(t.Context, &exit)
-	var exitedAt *string
-	if exit.TaskID == uuidToString(t.ID) && exit.At != "" && (t.Status == "completed" || t.Status == "failed" || t.Status == "cancelled") {
-		exitedAt = &exit.At
-	}
 	return AgentTaskResponse{
-		ExecutionExitedAt: exitedAt,
+		TaskExecutionReceipt: taskExecutionReceipt(t),
 		// Task-scoped provenance must not transfer through copied retry context.
 		CancelledByCommentChange: t.Status == "cancelled" && cancellation.TaskID != "" && cancellation.TaskID == uuidToString(t.ID),
 		CancelledBy:              taskCancellationActorToResponse(t),
