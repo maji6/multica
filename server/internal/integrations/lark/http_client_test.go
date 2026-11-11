@@ -1634,3 +1634,32 @@ type fakeClock struct{ now time.Time }
 
 func (c *fakeClock) Now() time.Time          { return c.now }
 func (c *fakeClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
+
+func TestHTTPClient_SendMarkdownCard_PrivateMention(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("tok_notice", 7200)
+	fake.stubSend(map[string]any{"code": 0, "data": map[string]string{"message_id": "om_notice"}}, func(r *http.Request, body map[string]string) {
+		if r.URL.Query().Get("receive_id_type") != "open_id" || body["receive_id"] != "ou_bound_member" {
+			t.Fatalf("wrong recipient: %s %v", r.URL, body)
+		}
+		if body["uuid"] != "55555555-5555-4555-8555-555555555555" {
+			t.Fatalf("missing stable notification key: %v", body)
+		}
+		if body["msg_type"] != "interactive" || !strings.Contains(body["content"], "Provide the staging entry") {
+			t.Fatalf("wrong content: %v", body)
+		}
+	})
+	c := newTestClient(fake, time.Now)
+	id, err := c.SendMarkdownCard(context.Background(), SendMarkdownCardParams{InstallationID: testCreds(), OpenID: "ou_bound_member", UUID: "55555555-5555-4555-8555-555555555555", Markdown: "Provide the staging entry"})
+	if err != nil || id != "om_notice" {
+		t.Fatalf("id=%q error=%v", id, err)
+	}
+	for _, p := range []SendMarkdownCardParams{
+		{OpenID: "ou_owner", ChatID: "oc_group", Markdown: "test"},
+		{OpenID: "ou_owner", ReplyTarget: ReplyTarget{MessageID: "om_other"}, Markdown: "test"},
+	} {
+		if _, err := c.SendMarkdownCard(context.Background(), p); err == nil {
+			t.Fatal("mixed private and chat destinations accepted")
+		}
+	}
+}

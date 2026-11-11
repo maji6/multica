@@ -145,6 +145,8 @@ func (defaultRenderer) Render(in RenderInput) (CardRender, error) {
 type PatcherQueries interface {
 	mediaDeliveryQueries
 	referenceLinkQueries
+	FindChannelBindingForMemberOnAgentInstallation(context.Context, db.FindChannelBindingForMemberOnAgentInstallationParams) (db.ChannelUserBinding, error)
+	GetCommentInWorkspace(context.Context, db.GetCommentInWorkspaceParams) (db.Comment, error)
 	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
 	TaskHasChannelIngestedMessages(ctx context.Context, taskID pgtype.UUID) (bool, error)
 	GetChannelTaskDelivery(ctx context.Context, taskID pgtype.UUID) (db.ChannelTaskDelivery, error)
@@ -284,6 +286,7 @@ func (p *Patcher) SetTypingIndicatorManager(m *TypingIndicatorManager) {
 // empty completion payload must not overwrite the reply. Queued/running events
 // do not drive a thinking-card lifecycle.
 func (p *Patcher) Register(bus *events.Bus) {
+	bus.Subscribe(protocol.EventInboxNew, p.handleInboxMention)
 	bus.Subscribe(protocol.EventTaskFailed, p.handleEvent)
 	bus.Subscribe(protocol.EventChatDone, p.handleEvent)
 	bus.Subscribe(protocol.EventTaskCancelled, p.handleEvent)
