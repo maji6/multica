@@ -76,6 +76,12 @@ Safari stays on the login page after a successful sign-in.
 
 The first line becomes the title and the rest becomes the description. Sending `/issue` alone creates nothing; the Bot replies with the required format instead.
 
+## Receive action requests
+
+When this bot's agent explicitly mentions a member in an issue comment, the bot sends the comment to that member's linked Feishu account as a private message. The message keeps the comment and its issue links. Ordinary comments, status changes, and other agents' notifications are not forwarded through this bot. Muting mentions in the inbox also mutes these messages.
+
+The agent's task instructions decide when to request action, how to explain it, and when a reminder would be redundant. If delivery fails, the original issue and Multica inbox item remain available; a connected bot does not prove that each message was delivered. Follow the issue link to reply through the existing task workflow.
+
 ## Images and files from the agent
 
 When file delivery is enabled, text and supported images attached to an agent’s reply appear together in one Feishu message. Images update that message as they finish uploading; files arrive separately in the same conversation. An image-only reply can use an image message. Supported images are limited to 10 MB; unsupported, larger, or explicitly rejected images are sent as files, up to 30 MB. This requires object storage and the application’s resource upload permission. If delivery fails or cannot be confirmed, the attachments remain available on the reply in Multica. Check the conversation before requesting a resend.
