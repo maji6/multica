@@ -68,7 +68,7 @@ export function GongfengRepositoryPicker({ wsId, connection, onClose, onImport }
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
-      <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-xl">
+      <DialogContent className="flex max-h-[85%] flex-col sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{t(($) => $.vcs.gongfeng_repositories)}</DialogTitle>
           <DialogDescription>{t(($) => $.vcs.gongfeng_repositories_hint)}</DialogDescription>
