@@ -61,7 +61,7 @@ func TestGongfengWebhookAuthentication(t *testing.T) {
 		"":                   EventOther,
 	} {
 		h.Set("X-Event", event)
-		if got := p.EventKind(h); got != want {
+		if got := p.EventKind(h, nil); got != want {
 			t.Fatalf("EventKind(%q) = %v, want %v", event, got, want)
 		}
 	}

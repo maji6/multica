@@ -27,22 +27,46 @@ func TestWebhookCommentFilters(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			payload, _ := json.Marshal(map[string]any{"action": tc.action, "comment": map[string]any{"body": tc.body}})
 			env := WebhookEnvelope{Event: "issue_comment." + tc.action, EventPayload: payload}
-			if got := webhookEventAllowedByTriggerScope(filters, env); got != tc.want {
+			if got := evaluateWebhookTriggerScope(filters, env).Allowed; got != tc.want {
 				t.Fatalf("allowed = %v, want %v", got, tc.want)
 			}
 		})
 	}
 	for _, payload := range []string{`{}`, `{"comment":{"body":12}}`, `[]`} {
-		if webhookEventAllowedByTriggerScope(filters, WebhookEnvelope{Event: "issue_comment.created", EventPayload: json.RawMessage(payload)}) {
+		if evaluateWebhookTriggerScope(filters, WebhookEnvelope{Event: "issue_comment.created", EventPayload: json.RawMessage(payload)}).Allowed {
 			t.Fatalf("missing or malformed comment was accepted: %s", payload)
 		}
 	}
 	env := WebhookEnvelope{Event: "issue_comment.created", EventPayload: json.RawMessage(`{"comment":{"body":"ordinary comment"}}`)}
-	if !webhookEventAllowedByTriggerScope([]byte(`[{"event":"issue_comment","actions":["created"]}]`), env) {
+	if !evaluateWebhookTriggerScope([]byte(`[{"event":"issue_comment","actions":["created"]}]`), env).Allowed {
 		t.Fatal("existing filters without comment_first_lines must retain their behavior")
 	}
-	if !webhookEventAllowedByTriggerScope([]byte(`[{"event":"issue_comment","comment_first_lines":["【待确认】"]},{"event":"issue_comment"}]`), env) {
+	if !evaluateWebhookTriggerScope([]byte(`[{"event":"issue_comment","comment_first_lines":["【待确认】"]},{"event":"issue_comment"}]`), env).Allowed {
 		t.Fatal("a non-matching comment filter must allow another row to match")
+	}
+}
+
+func TestWebhookCommentAndPayloadFiltersMustBothMatch(t *testing.T) {
+	filters := []byte(`[{"event":"issue_comment","comment_first_lines":["ready"],"conditions":[{"path":"repository.name","op":"equals","value":"widget"}]}]`)
+	for _, tc := range []struct {
+		body, repository string
+		allowed          bool
+	}{
+		{"ready", "widget", true},
+		{"ready", "other", false},
+		{"ordinary comment", "widget", false},
+	} {
+		payload, err := json.Marshal(map[string]any{
+			"comment":    map[string]string{"body": tc.body},
+			"repository": map[string]string{"name": tc.repository},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := WebhookEnvelope{Event: "issue_comment.created", EventPayload: payload}
+		if got := evaluateWebhookTriggerScope(filters, env).Allowed; got != tc.allowed {
+			t.Errorf("comment %q on %q: allowed = %v, want %v", tc.body, tc.repository, got, tc.allowed)
+		}
 	}
 }
 

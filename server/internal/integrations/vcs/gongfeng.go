@@ -20,7 +20,7 @@ func init() { register(gongfengProvider{}) }
 
 func (gongfengProvider) Kind() Kind { return KindGongfeng }
 
-func (gongfengProvider) EventKind(h http.Header) EventKind {
+func (gongfengProvider) EventKind(h http.Header, _ []byte) EventKind {
 	if h.Get("X-Event") == "Merge Request Hook" {
 		return EventPullRequest
 	}

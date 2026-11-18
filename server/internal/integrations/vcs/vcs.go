@@ -121,7 +121,7 @@ type Account struct {
 type Provider interface {
 	Kind() Kind
 	// EventKind classifies an inbound webhook from its headers.
-	EventKind(h http.Header) EventKind
+	EventKind(h http.Header, body []byte) EventKind
 	// VerifySignature authenticates the raw body against the connection's
 	// stored secret. Forgejo/Gitea use HMAC-SHA256 (X-Gitea-Signature);
 	// GitLab and Gongfeng compare a plaintext token (X-Gitlab-Token / X-Token).
@@ -133,6 +133,13 @@ type Provider interface {
 	// ValidateToken confirms the token works against instanceURL and returns
 	// the authenticated account. Maps a 401/403 to ErrUnauthorized.
 	ValidateToken(ctx context.Context, instanceURL, token string) (Account, error)
+}
+
+// RepositoryAccessChecker verifies that the connection token can read the
+// exact repository named by a GitLab system-hook event. Workspace registration
+// is an allowlist, not proof of provider access.
+type RepositoryAccessChecker interface {
+	RepositoryReadable(ctx context.Context, instanceURL, owner, name, token string) (bool, error)
 }
 
 // registry maps a Kind to its Provider. Populated by package init in the
