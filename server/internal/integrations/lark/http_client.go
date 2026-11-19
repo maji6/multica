@@ -456,8 +456,11 @@ func markdownCardJSON(markdown, summary string) (string, error) {
 // highlighting), no tables, no heading sizes. Schema-2.0's
 // `markdown` tag is closer to GFM.
 func (c *httpAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCardParams) (string, error) {
-	if p.ChatID == "" {
-		return "", errors.New("lark http client: missing chat_id")
+	if p.OpenID == "" && p.ChatID == "" {
+		return "", errors.New("lark http client: missing message recipient")
+	}
+	if p.OpenID != "" && (p.ChatID != "" || p.ReplyTarget.IsSet()) {
+		return "", errors.New("lark http client: private recipient cannot also target a chat or reply")
 	}
 	if p.Markdown == "" {
 		return "", errors.New("lark http client: missing markdown body")
@@ -467,6 +470,13 @@ func (c *httpAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCard
 		return "", err
 	}
 	path, body := outboundMessageRequest(p.ChatID, "interactive", content, p.ReplyTarget)
+	if p.OpenID != "" {
+		path = "/open-apis/im/v1/messages?receive_id_type=open_id"
+		body["receive_id"] = p.OpenID
+	}
+	if p.UUID != "" {
+		body["uuid"] = p.UUID
+	}
 	var resp struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
