@@ -4,6 +4,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { issueKeys, PAGINATED_CATEGORIES } from "@multica/core/issues/queries";
 import { projectKeys } from "@multica/core/projects/queries";
+import { configStore } from "@multica/core/config";
+import { docKeys } from "@multica/core/docs";
+import { DOCS_V1_FLAG } from "@multica/core/feature-flags";
 import { statusCategoryOfKey } from "@multica/core/issues";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { IssueStatusCategory, ListIssuesCache } from "@multica/core/types";
@@ -123,6 +126,7 @@ function fakeQc(data: {
   }>;
   issues?: Array<{ id: string; identifier: string; title: string; status: string }>;
   projects?: Array<{ id: string; title: string; status: string; archived_at: string | null }>;
+  docs?: Array<{ id: string; title: string; updatedAt: string }>;
 }): QueryClient {
   const map = new Map<string, unknown>();
   map.set(JSON.stringify(workspaceKeys.members("ws-1")), data.members ?? []);
@@ -160,7 +164,9 @@ function fakeQc(data: {
     projects: data.projects ?? [],
     total: data.projects?.length ?? 0,
   });
+  map.set(JSON.stringify(docKeys.tree("ws-1")), { folders: [], docs: data.docs ?? [] });
   return {
+    prefetchQuery: vi.fn(),
     getQueryData: (key: readonly unknown[]) => map.get(JSON.stringify(key)),
     getQueriesData: <T,>(filter: { queryKey: readonly unknown[] }) => {
       const prefix = filter.queryKey as unknown[];
@@ -212,6 +218,7 @@ describe("createMentionSuggestion", () => {
     searchProjectsMock.mockReset();
     searchProjectsMock.mockResolvedValue({ projects: [], total: 0 });
     Element.prototype.scrollIntoView = vi.fn();
+    configStore.getState().setFeatureFlags({ [DOCS_V1_FLAG]: true });
   });
 
   it("keeps the mention query active across spaces for multi-word search", () => {
@@ -491,6 +498,77 @@ describe("createMentionSuggestion", () => {
     const items = createMentionSuggestion(qc).items!(itemArgs("road")) as MentionItem[];
 
     expect(items.filter((i) => i.type === "project").map((i) => i.id)).toEqual(["p-live"]);
+  });
+
+  it("offers docs by title or pinyin, and recent docs before anything is typed", () => {
+    const qc = fakeQc({
+      docs: [
+        { id: "d-runbook", title: "Release runbook", updatedAt: "2026-11-01T00:00:00Z" },
+        { id: "d-arch", title: "架构说明", updatedAt: "2026-11-03T00:00:00Z" },
+        { id: "d-blank", title: "", updatedAt: "2026-11-04T00:00:00Z" },
+      ],
+    });
+    const docs = (query: string) =>
+      (createMentionSuggestion(qc).items!(itemArgs(query)) as MentionItem[])
+        .filter((i) => i.type === "doc")
+        .map((i) => i.id);
+
+    expect(docs("runbook")).toEqual(["d-runbook"]);
+    expect(docs("jg")).toEqual(["d-arch"]);
+    expect(docs("")).toEqual(["d-arch", "d-runbook"]);
+  });
+
+  it("loads the doc tree on the first mention when it is not cached", () => {
+    const qc = fakeQc({});
+    const getQueryData = qc.getQueryData.bind(qc);
+    qc.getQueryData = ((key: readonly unknown[]) =>
+      JSON.stringify(key) === JSON.stringify(docKeys.tree("ws-1"))
+        ? undefined
+        : getQueryData(key)) as QueryClient["getQueryData"];
+
+    createMentionSuggestion(qc).items!(itemArgs(""));
+
+    expect(qc.prefetchQuery).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: docKeys.tree("ws-1") }),
+    );
+  });
+
+  it("offers no docs and loads no doc tree while docs_v1 is off", () => {
+    configStore.getState().setFeatureFlags({});
+    const qc = fakeQc({});
+    const getQueryData = qc.getQueryData.bind(qc);
+    qc.getQueryData = ((key: readonly unknown[]) =>
+      JSON.stringify(key) === JSON.stringify(docKeys.tree("ws-1"))
+        ? undefined
+        : getQueryData(key)) as QueryClient["getQueryData"];
+
+    const items = createMentionSuggestion(qc).items!(itemArgs("")) as MentionItem[];
+
+    expect(items.filter((item) => item.type === "doc")).toEqual([]);
+    expect(qc.prefetchQuery).not.toHaveBeenCalled();
+
+    const cached = fakeQc({
+      docs: [{ id: "d-runbook", title: "Release runbook", updatedAt: "2026-11-01T00:00:00Z" }],
+    });
+    const offered = createMentionSuggestion(cached).items!(itemArgs("runbook")) as MentionItem[];
+    expect(offered.filter((item) => item.type === "doc")).toEqual([]);
+  });
+
+  it("shows docs in their own section", () => {
+    render(
+      <I18nWrapper>
+        <MentionList
+          items={[{ id: "d-runbook", label: "Release runbook", type: "doc" }]}
+          query="run"
+          command={vi.fn()}
+        />
+      </I18nWrapper>,
+    );
+    const headings = Array.from(document.querySelectorAll<HTMLElement>("div.uppercase")).map(
+      (el) => el.textContent,
+    );
+    expect(headings).toEqual(["Docs"]);
+    expect(screen.getByText("Release runbook")).toBeInTheDocument();
   });
 
   it("does not call searchIssues for an empty query", () => {

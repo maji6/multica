@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { CoreProvider } from "@multica/core/platform";
 import { useSearchStore } from "@multica/core/command-bar";
 import { useAuthStore } from "@multica/core/auth";
+import { DOCS_V1_FLAG } from "@multica/core/feature-flags";
 import { workspaceListOptions } from "@multica/core/workspace";
 import { RESOURCES } from "@multica/views/locales";
 import { useTabStore } from "@/stores/tab-store";
@@ -61,7 +62,9 @@ const NETWORK_WAIT = { timeout: 15_000 };
 const TEST_TIMEOUT = 60_000;
 
 function payloadFor(path: string, workspace: string): unknown {
-  if (path === "/api/config") return { feature_flags: {}, allow_signup: false };
+  if (path === "/api/config") {
+    return { feature_flags: { [DOCS_V1_FLAG]: true }, allow_signup: false };
+  }
   if (path === "/api/me") return {
     id: "synthetic-user", name: "Synthetic user", email: "synthetic@example.test",
     onboarded_at: stamp, onboarding_questionnaire: { source: "other" },
@@ -70,6 +73,8 @@ function payloadFor(path: string, workspace: string): unknown {
   if (path === "/api/workspaces") return workspaces;
   if (path === "/api/issues/search") return { issues: [issue(workspace === "synthetic-b" ? "b" : "a")] };
   if (path === "/api/projects/search" || path === "/api/projects") return { projects: [], total: 0 };
+  if (path === "/api/docs/search") return { docs: [] };
+  if (path === "/api/docs") return { folders: [], docs: [] };
   if (path === "/api/issues") return { issues: [], total: 0 };
   if (path === "/api/issue-statuses") return { statuses: [] };
   if (path === "/api/autopilots") return { autopilots: [], total: 0 };
@@ -207,6 +212,8 @@ it("cancels an in-flight search when the production router switches workspace", 
   await openSearch();
   holdA = true;
   fireEvent.change(input(), { target: { value: "alpha" } });
+  // Issues and projects: one held search request each. Docs search stays off
+  // because the fixture config leaves docs_v1 disabled.
   await waitFor(() => expect(held.length).toBe(2), NETWORK_WAIT);
   await notify("synthetic-b");
   await act(async () => {
