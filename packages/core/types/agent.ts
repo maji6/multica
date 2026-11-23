@@ -1066,11 +1066,6 @@ export interface RuntimeUsage {
   uncosted_cache_write_tokens?: number;
 }
 
-export interface RuntimeHourlyActivity {
-  hour: number;
-  count: number;
-}
-
 // Subscription rate limits of the account a runtime's agent CLI runs under
 // (`GET /api/runtimes/:id/rate-limits`, MUL-9427), as the CLI last reported
 // them during a task. Window kinds and statuses fall back to "other" / ""
@@ -1247,10 +1242,15 @@ export interface DashboardFailureByAgent {
 
 export type RuntimeUpdateStatus =
   | "pending"
+  // The daemon is busy and installs once its last agent task finishes.
+  | "scheduled"
   | "running"
   | "completed"
   | "failed"
-  | "timeout";
+  | "timeout"
+  | "cancelled"
+  // The machine did not become idle within 24 hours.
+  | "expired";
 
 export interface RuntimeUpdate {
   id: string;
@@ -1259,6 +1259,10 @@ export interface RuntimeUpdate {
   target_version: string;
   output?: string;
   error?: string;
+  /** Agent tasks the daemon is waiting for while `scheduled`. */
+  active_tasks?: number;
+  /** True until installation starts. */
+  cancellable: boolean;
   created_at: string;
   updated_at: string;
 }
