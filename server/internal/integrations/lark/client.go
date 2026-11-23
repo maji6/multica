@@ -319,6 +319,10 @@ type SendTextParams struct {
 type SendMarkdownCardParams struct {
 	InstallationID InstallationCredentials
 	ChatID         ChatID
+	// OpenID addresses a bound member's private chat instead of ChatID.
+	OpenID string
+	// UUID makes repeated deliveries of one notification idempotent at Lark.
+	UUID string
 	// Markdown is the body. Lark schema-2.0 markdown supports GFM-ish:
 	// **bold**, *italic*, `inline code`, fenced code blocks, headings,
 	// ordered + unordered lists, links, tables, blockquotes, separators.
